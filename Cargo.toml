@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = [
+  "libbinder-sys",
+  "bytemuck-utils",
+  "libbinder-test",
+  "libbinder"
+]
