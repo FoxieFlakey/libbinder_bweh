@@ -143,7 +143,7 @@ impl Runtime {
         let read = &ret_buf[0..bytes_read];
 
         // SAFETY: Kernel jsut wrote it
-        for ret in unsafe { RetIterator::new(self.binder_dev.as_fd(), &read) } {
+        for ret in unsafe { RetIterator::new(&read) } {
             match ret {
                 return_parser::RetVal::Err(e) => {
                     bail!("Error sending packet (kernel returned BR_ERROR): {e}")

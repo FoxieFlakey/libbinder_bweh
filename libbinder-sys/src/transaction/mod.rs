@@ -9,12 +9,12 @@ pub use kernel_managed::TransactionKernelManaged;
 pub use not_kernel_managed::TransactionNotKernelMananged;
 
 #[derive(Clone)]
-pub enum Transaction<'binder, 'buffer, 'buffer_offsets> {
+pub enum Transaction<'buffer, 'buffer_offsets> {
     NotKernelManaged(TransactionNotKernelMananged<'buffer, 'buffer_offsets>),
-    KernelManaged(TransactionKernelManaged<'binder>),
+    KernelManaged(TransactionKernelManaged),
 }
 
-impl<'buffer, 'buffer_offsets> Transaction<'_, 'buffer, 'buffer_offsets> {
+impl<'buffer, 'buffer_offsets> Transaction<'buffer, 'buffer_offsets> {
     pub fn with_bytes<F: FnOnce(&[u8]) -> R, R>(&self, func: F) -> R {
         match self {
             Self::NotKernelManaged(x) => x.with_bytes(func),

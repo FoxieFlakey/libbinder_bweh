@@ -1,36 +1,33 @@
-use std::os::fd::BorrowedFd;
-
 use libbinder_sys::{
     BinderUsize,
     transaction::{Transaction, TransactionKernelManaged},
 };
 
-pub struct RetIterator<'binder, 'a> {
+pub struct RetIterator<'a> {
     buf: &'a [u8],
-    binder: BorrowedFd<'binder>,
 }
 
-impl<'binder, 'buf> RetIterator<'binder, 'buf> {
+impl<'buf> RetIterator<'buf> {
     // # Safety
     // caller must make sure that 'buf' is valid buffer written by kernel
-    pub unsafe fn new(binder: BorrowedFd<'binder>, buf: &'buf [u8]) -> Self {
-        Self { binder, buf }
+    pub unsafe fn new(buf: &'buf [u8]) -> Self {
+        Self { buf }
     }
 }
 
-pub enum RetVal<'binder, 'buf> {
+pub enum RetVal<'buf> {
     Err(i32),
     Ok,
-    Transaction(Transaction<'binder, 'buf, 'buf>),
+    Transaction(Transaction<'buf, 'buf>),
     TransactionComplete,
-    Reply(Transaction<'binder, 'buf, 'buf>),
+    Reply(Transaction<'buf, 'buf>),
     DeadBinder(usize),
     DeadReply,
     SpawnLooper,
 }
 
-impl<'binder, 'buf> Iterator for RetIterator<'binder, 'buf> {
-    type Item = RetVal<'binder, 'buf>;
+impl<'buf> Iterator for RetIterator<'buf> {
+    type Item = RetVal<'buf>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.buf.is_empty() {
             return None;
@@ -60,7 +57,6 @@ impl<'binder, 'buf> Iterator for RetIterator<'binder, 'buf> {
                 advance_bytes = TransactionKernelManaged::bytes_needed();
                 RetVal::Transaction(Transaction::KernelManaged(unsafe {
                     TransactionKernelManaged::from_bytes(
-                        self.binder.clone(),
                         &payload[..TransactionKernelManaged::bytes_needed()],
                         false,
                     )
@@ -72,7 +68,6 @@ impl<'binder, 'buf> Iterator for RetIterator<'binder, 'buf> {
                 advance_bytes = TransactionKernelManaged::bytes_needed();
                 RetVal::Reply(Transaction::KernelManaged(unsafe {
                     TransactionKernelManaged::from_bytes(
-                        self.binder.clone(),
                         &payload[..TransactionKernelManaged::bytes_needed()],
                         true,
                     )

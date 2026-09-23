@@ -1,55 +1,27 @@
-use std::{os::fd::BorrowedFd, slice, sync::Arc};
+use std::slice;
 
 use bytemuck_utils::PodData;
 use enumflags2::BitFlags;
-use nix::errno::Errno;
 
 use crate::{
     BinderUsize, ObjectRefLocal,
-    commands::Command,
     object::reference::{ObjectRef, ObjectRefRemote},
     transaction::{
         BinderOrHandleUnion, BufferStruct, DataUnion, TransactionDataCommon, TransactionDataRaw,
     },
-    write_read::binder_read_write,
 };
 
-struct KernelBuffer<'binder> {
-    binder_dev: BorrowedFd<'binder>,
-    buffer_ptr: BinderUsize,
-}
-
-impl Drop for KernelBuffer<'_> {
-    fn drop(&mut self) {
-        // There no more reference to the buffer anymore, free the buffer
-        let mut commands = Vec::new();
-        commands.extend_from_slice(&Command::FreeBuffer.as_bytes());
-        commands.extend_from_slice(&self.buffer_ptr.to_ne_bytes());
-
-        loop {
-            match binder_read_write(self.binder_dev, &commands, &mut []) {
-                Ok(_) => break,
-                Err((Errno::EINTR, _)) => (),
-                Err((e, _)) => panic!("Error freeing kernel buffer: {}", e),
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
-pub struct TransactionKernelManaged<'binder> {
+pub struct TransactionKernelManaged {
     // Cannot specifically make 'static is placeholder mean
     // as long as this struct alive. The getter method turn
     // it into proper borrow to ensure that by time when. Drop
     // runs this is dropped first and safe
     data: TransactionDataCommon<'static, 'static>,
-
-    // has to come after the data, as the data refers to
-    // the kernel buffer
-    _kernel_buf: Arc<KernelBuffer<'binder>>,
+    kernel_buf: BinderUsize,
 }
 
-impl<'binder> TransactionKernelManaged<'binder> {
+impl TransactionKernelManaged {
     // Note: We placed fake empty slices, which will be restored
     // don't change the slices. That is to ensure references to
     // buffer don't escape as 'static well just a placeholder
@@ -70,6 +42,10 @@ impl<'binder> TransactionKernelManaged<'binder> {
         self.data.data_slice = buffer_slice_saved;
         self.data.offsets = offsets_slice_saved;
         return ret;
+    }
+
+    pub fn get_kernel_buf(&self) -> BinderUsize {
+        self.kernel_buf
     }
 
     pub fn with_bytes<F: FnOnce(&[u8]) -> R, R>(&self, func: F) -> R {
@@ -119,11 +95,7 @@ impl<'binder> TransactionKernelManaged<'binder> {
     // and the bytes assumed to be from BR_TRANSACTION/BR_REPLY
     //
     // The 'bytes' alignment can be unaligned, and its fine
-    pub unsafe fn from_bytes(
-        binder_dev: BorrowedFd<'binder>,
-        bytes: &[u8],
-        is_reply: bool,
-    ) -> Self {
+    pub unsafe fn from_bytes(bytes: &[u8], is_reply: bool) -> Self {
         let raw = PodData::<TransactionDataRaw>::try_from_bytes(bytes)
             .expect("Cannot convert bytes to transaction data raw");
 
@@ -139,10 +111,7 @@ impl<'binder> TransactionKernelManaged<'binder> {
         };
 
         Self {
-            _kernel_buf: Arc::new(KernelBuffer {
-                buffer_ptr: unsafe { raw.data.ptr.buffer },
-                binder_dev,
-            }),
+            kernel_buf: unsafe { raw.data.ptr.buffer },
             data: TransactionDataCommon {
                 code: raw.code,
                 target: if is_reply {
