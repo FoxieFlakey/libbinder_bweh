@@ -2,7 +2,7 @@
 // easing few stuffs such as cnoverting slice of
 // bytes with unknown alignment
 
-use std::{slice, mem::MaybeUninit, ops::Deref};
+use std::{mem::MaybeUninit, ops::Deref, slice};
 
 use bytemuck::{Pod, PodCastError};
 

@@ -43,8 +43,7 @@ impl PtrCookieRaw {
     // any bit pattern is correct
     pub fn try_from_raw_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         Ok(PodData::unwrap(PodData::to_owned(
-            PodData::<PtrCookieRaw>::try_from_bytes(bytes)
-                .context("")?,
+            PodData::<PtrCookieRaw>::try_from_bytes(bytes).context("")?,
         )))
     }
 }
