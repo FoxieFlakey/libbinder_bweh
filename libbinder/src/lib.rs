@@ -1,18 +1,19 @@
 use std::{
+    mem,
     os::fd::{AsFd, OwnedFd},
     path::Path,
-    sync::Arc,
+    sync::{Arc, Weak},
+    thread::{self, JoinHandle},
 };
 
 use anyhow::{Context, anyhow, bail};
 use enumflags2::BitFlags;
 use libbinder_sys::{
-    BinderUsize,
     commands::Command,
     transaction::{
         Transaction, TransactionDataCommon, TransactionFlag, TransactionNotKernelMananged,
     },
-    types::reference::{ObjectRef, ObjectRefRemote},
+    types::reference::{ObjectRef, ObjectRefLocal, ObjectRefRemote},
     write_read::binder_read_write,
 };
 use nix::{
@@ -22,36 +23,69 @@ use nix::{
     sys::stat::Mode,
 };
 
-use crate::{mmap::Mmap, packet::Packet, return_parser::RetIterator};
+use crate::{mmap::Mmap, packet::Packet, pipe::Pipe, return_parser::RetIterator};
 
 mod mmap;
 pub mod object;
 pub mod packet;
+mod pipe;
 mod return_parser;
 
 pub fn lib_main() {
     println!("Hello world!");
 
-    let rt = Runtime::new("/dev/binder").unwrap();
-    let packet = {
-        let mut w = packet::Writer::new();
-        w.write_u8(0x29);
-        w.write_u64(0x38);
-        w.finish()
-    };
+    match std::env::args()
+        .collect::<Vec<_>>()
+        .get(1)
+        .map(String::as_str)
+    {
+        Some("context_manager") => {
+            mem::forget(Runtime::new("/dev/binder", ContextManagerInfo::Concrete(())).unwrap());
+            loop {
+                nix::unistd::sleep(2);
+            }
+        }
+        Some("app") => {
+            let rt = Runtime::new("/dev/binder", ContextManagerInfo::Remote(())).unwrap();
 
-    rt.send_packet(
-        0x2929,
-        object::Flag::OneWay.into(),
-        &packet,
-        SERVICE_MANAGER,
-    )
-    .unwrap();
+            let packet = {
+                let mut w = packet::Writer::new();
+                w.write_u8(0x29);
+                w.write_u64(0x38);
+                w.finish()
+            };
+
+            rt.send_packet(
+                0x2929,
+                object::Flag::OneWay.into(),
+                &packet,
+                SERVICE_MANAGER,
+            )
+            .unwrap();
+        }
+        Some(x) => {
+            eprintln!("Unknown mode: {x}");
+        }
+        None => {
+            eprintln!("Mode must be supplied, either 'context_manager' or 'app'");
+        }
+    }
 }
 
 pub struct Runtime {
     binder_dev: Arc<OwnedFd>,
+    shutdown_pipe: Arc<Pipe<bool>>,
+    join_handle: JoinHandle<()>,
     _mmap: Mmap,
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        self.shutdown_pipe.write_blocking(true).unwrap();
+        if self.join_handle.thread().id() == thread::current().id() {
+            return;
+        }
+    }
 }
 
 pub const READ_BUF_SIZE: usize = 256;
@@ -61,23 +95,56 @@ pub const SERVICE_MANAGER: ObjectRef = ObjectRef::Remote(ObjectRefRemote {
 });
 pub const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
+pub enum ContextManagerInfo {
+    Concrete(()),
+    Remote(()),
+}
+
 impl Runtime {
-    pub fn new<P>(path: P) -> anyhow::Result<Arc<Runtime>>
+    pub fn new<P>(path: P, context_manager: ContextManagerInfo) -> anyhow::Result<Arc<Runtime>>
     where
         P: AsRef<Path>,
     {
-        let dev = open(
-            path.as_ref(),
-            OFlag::O_RDWR | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
-            Mode::all(),
-        )
-        .context("Opening binder dev")?;
-        let rt = Self {
-            _mmap: Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
-                .context("Trying to map buffer for binder")?,
-            binder_dev: Arc::new(dev),
-        };
-        Ok(Arc::new(rt))
+        let dev = Arc::new(
+            open(
+                path.as_ref(),
+                OFlag::O_RDWR | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
+                Mode::all(),
+            )
+            .context("Opening binder dev")?,
+        );
+
+        match context_manager {
+            ContextManagerInfo::Concrete(_) => {
+                // We become client, here would be do some calls to binder
+                // to say we're the manager and also remember the concrete
+                libbinder_sys::binder_set_context_mgr(
+                    dev.as_fd(),
+                    &ObjectRefLocal {
+                        data: 0,
+                        extra_data: 0,
+                    },
+                )
+                .context("Cannot become context manager")?;
+            }
+            ContextManagerInfo::Remote(_) => {
+                // We become client, here would be creating local
+                // service manager proxy
+            }
+        }
+
+        let shutdown_pipe = Arc::new(Pipe::new().context("Creating shutdown pipe")?);
+        let mmap = Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
+            .context("Trying to map buffer for binder")?;
+        Ok(Arc::new_cyclic(|weak| {
+            let weak = weak.clone();
+            Self {
+                _mmap: mmap,
+                binder_dev: dev.clone(),
+                shutdown_pipe: shutdown_pipe.clone(),
+                join_handle: thread::spawn(move || worker(dev, shutdown_pipe, weak.clone())),
+            }
+        }))
     }
 
     pub(crate) fn do_read_write(
@@ -187,4 +254,53 @@ impl Runtime {
 
         Ok(reply)
     }
+
+    // handle transaction that comes
+    fn handle_transaction(&self) {
+        let mut read_buf = [0; READ_BUF_SIZE];
+        let read_bytes = self
+            .do_read_write(&[], &mut read_buf)
+            .expect("Cannot read incoming transactions");
+        for ret in unsafe { RetIterator::new(&read_buf[..read_bytes]) } {
+            match ret {
+                return_parser::RetVal::TransactionComplete
+                | return_parser::RetVal::DeadReply
+                | return_parser::RetVal::Ok
+                | return_parser::RetVal::Reply(_)
+                | return_parser::RetVal::Err(_) => panic!("Unexpected"),
+                return_parser::RetVal::Transaction(transaction) => {
+                    todo!("handle transaction")
+                }
+                return_parser::RetVal::DeadBinder(_) => (),
+                return_parser::RetVal::SpawnLooper => (),
+            }
+        }
+    }
+}
+
+fn worker(dev: Arc<OwnedFd>, shutdown_pipe: Arc<Pipe<bool>>, runtime: Weak<Runtime>) {
+    loop {
+        let mut pollfd = [
+            PollFd::new(dev.as_fd(), PollFlags::POLLIN),
+            PollFd::new(shutdown_pipe.get_read_fd(), PollFlags::POLLIN),
+        ];
+
+        poll(&mut pollfd, PollTimeout::NONE).unwrap();
+
+        if !pollfd[1].revents().unwrap().is_empty() {
+            break;
+        }
+
+        if !pollfd[0].revents().unwrap().is_empty() {
+            if let Some(x) = runtime.upgrade() {
+                x.handle_transaction();
+            } else {
+                // This might indicate runtime has shutdown BUT there race that
+                // this might be reached BEFORE the runtime init completed
+                // so this is no-op
+            }
+        }
+    }
+
+    println!("Shutdown triggered, quiting...");
 }
