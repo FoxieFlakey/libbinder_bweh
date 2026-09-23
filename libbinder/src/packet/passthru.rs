@@ -1,5 +1,7 @@
 use libbinder_sys::types::reference::ObjectRef;
 
+use crate::packet::Packet;
+
 // A very simple format, passing data as it is
 // it is unportable because usize and platform
 // dependant type gets encoded too.
@@ -16,6 +18,13 @@ impl RawFormat {
             data: Vec::new(),
             offsets: Vec::new(),
         }
+    }
+
+    pub fn copy_from(&mut self, other: &Packet) {
+        self.data.clear();
+        self.offsets.clear();
+        self.data.extend_from_slice(other.get_data());
+        self.offsets.extend_from_slice(other.get_offsets());
     }
 
     pub fn get_data(&self) -> &[u8] {

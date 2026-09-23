@@ -1,7 +1,7 @@
 use std::{
     os::fd::{AsFd, OwnedFd},
     path::Path,
-    sync::{Arc, Weak},
+    sync::{Arc, OnceLock, Weak},
     thread::{self, JoinHandle},
 };
 
@@ -22,12 +22,16 @@ use nix::{
     sys::stat::Mode,
 };
 
-use crate::{mmap::Mmap, packet::Packet, pipe::Pipe, return_parser::RetIterator};
+use crate::{
+    mmap::Mmap, object::Object, packet::Packet, pipe::Pipe, proxy::Proxy,
+    return_parser::RetIterator,
+};
 
 mod mmap;
 pub mod object;
 pub mod packet;
 mod pipe;
+mod proxy;
 mod return_parser;
 mod test;
 
@@ -37,6 +41,7 @@ pub struct Runtime {
     binder_dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
     join_handle: JoinHandle<()>,
+    manager: OnceLock<Arc<dyn Object>>,
     _mmap: Mmap,
 }
 
@@ -50,15 +55,15 @@ impl Drop for Runtime {
 }
 
 pub const READ_BUF_SIZE: usize = 256;
-pub const SERVICE_MANAGER: ObjectRef = ObjectRef::Remote(ObjectRefRemote {
+const SERVICE_MANAGER: ObjectRefRemote = ObjectRefRemote {
     data_handle: 0,
     extra_local_data: 0,
-});
+};
 pub const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 pub enum ContextManagerInfo {
-    Concrete(()),
-    Remote(()),
+    Concrete(Arc<dyn Object>),
+    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<dyn Object>>>),
 }
 
 impl Runtime {
@@ -75,8 +80,23 @@ impl Runtime {
             .context("Opening binder dev")?,
         );
 
-        match context_manager {
-            ContextManagerInfo::Concrete(_) => {
+        let shutdown_pipe = Arc::new(Pipe::new().context("Creating shutdown pipe")?);
+        let mmap = Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
+            .context("Trying to map buffer for binder")?;
+        let rt = Arc::new_cyclic(|weak| {
+            let weak = weak.clone();
+            let dev = dev.clone();
+            Self {
+                _mmap: mmap,
+                binder_dev: dev.clone(),
+                shutdown_pipe: shutdown_pipe.clone(),
+                manager: OnceLock::new(),
+                join_handle: thread::spawn(move || worker(dev, shutdown_pipe, weak.clone())),
+            }
+        });
+
+        rt.manager.set(match context_manager {
+            ContextManagerInfo::Concrete(manager) => {
                 // We become client, here would be do some calls to binder
                 // to say we're the manager and also remember the concrete
                 libbinder_sys::binder_set_context_mgr(
@@ -87,25 +107,18 @@ impl Runtime {
                     },
                 )
                 .context("Cannot become context manager")?;
+                manager
             }
-            ContextManagerInfo::Remote(_) => {
+            ContextManagerInfo::Remote(builder) => {
                 // We become client, here would be creating local
                 // service manager proxy
+                builder(Proxy {
+                    rt: Arc::downgrade(&rt),
+                    remote_ref: SERVICE_MANAGER,
+                })?
             }
-        }
-
-        let shutdown_pipe = Arc::new(Pipe::new().context("Creating shutdown pipe")?);
-        let mmap = Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
-            .context("Trying to map buffer for binder")?;
-        Ok(Arc::new_cyclic(|weak| {
-            let weak = weak.clone();
-            Self {
-                _mmap: mmap,
-                binder_dev: dev.clone(),
-                shutdown_pipe: shutdown_pipe.clone(),
-                join_handle: thread::spawn(move || worker(dev, shutdown_pipe, weak.clone())),
-            }
-        }))
+        });
+        Ok(rt)
     }
 
     pub(crate) fn do_read_write(
@@ -135,6 +148,10 @@ impl Runtime {
                 }
             }
         }
+    }
+
+    pub fn get_manager(&self) -> &Arc<dyn Object> {
+        self.manager.get().expect("Manager is not initialized")
     }
 
     pub(crate) fn send_packet(

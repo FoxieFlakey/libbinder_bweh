@@ -1,6 +1,27 @@
-use std::mem;
+use std::{mem, sync::Arc};
 
-use crate::{ContextManagerInfo, Runtime, SERVICE_MANAGER, object, packet};
+use enumflags2::BitFlags;
+
+use crate::{
+    ContextManagerInfo, Runtime,
+    object::{self, Object},
+    packet,
+};
+
+struct Concrete;
+
+impl Object for Concrete {
+    fn on_transaction(
+        &self,
+        code: u32,
+        _flags: enumflags2::BitFlags<object::Flag>,
+        _message: &packet::Packet,
+        _reply: Option<(&mut u32, &mut BitFlags<object::Flag>, &mut packet::Writer)>,
+    ) -> anyhow::Result<()> {
+        println!("Handled code: {code}");
+        Ok(())
+    }
+}
 
 pub fn lib_main() {
     println!("Hello world!");
@@ -11,13 +32,23 @@ pub fn lib_main() {
         .map(String::as_str)
     {
         Some("context_manager") => {
-            mem::forget(Runtime::new("/dev/binder", ContextManagerInfo::Concrete(())).unwrap());
+            mem::forget(
+                Runtime::new(
+                    "/dev/binder",
+                    ContextManagerInfo::Concrete(Arc::new(Concrete)),
+                )
+                .unwrap(),
+            );
             loop {
                 nix::unistd::sleep(2);
             }
         }
         Some("app") => {
-            let rt = Runtime::new("/dev/binder", ContextManagerInfo::Remote(())).unwrap();
+            let rt = Runtime::new(
+                "/dev/binder",
+                ContextManagerInfo::Remote(Box::new(|x| Ok(Arc::new(x)))),
+            )
+            .unwrap();
 
             let packet = {
                 let mut w = packet::Writer::new();
@@ -26,13 +57,9 @@ pub fn lib_main() {
                 w.finish()
             };
 
-            rt.send_packet(
-                0x2929,
-                object::Flag::OneWay.into(),
-                &packet,
-                SERVICE_MANAGER,
-            )
-            .unwrap();
+            rt.get_manager()
+                .on_transaction(0x2929, object::Flag::OneWay.into(), &packet, None)
+                .unwrap();
         }
         Some(x) => {
             eprintln!("Unknown mode: {x}");

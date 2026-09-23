@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use crate::packet::{self, Packet};
 use enumflags2::{BitFlags, bitflags};
 
@@ -8,17 +10,12 @@ pub enum Flag {
     OneWay,
 }
 
-pub trait Object {
-    // Similar to one in Android, returns true if 'code'
-    // is known else 'false' if not known
-    //
-    // On Err, runtime will try serializes the error to reply
-    // and returns it
+pub trait Object: Sync + Send + Any + 'static {
     fn on_transaction(
         &self,
         code: u32,
         flags: BitFlags<Flag>,
         message: &Packet,
-        reply: Option<&mut packet::Writer>,
-    ) -> anyhow::Result<bool>;
+        reply: Option<(&mut u32, &mut BitFlags<Flag>, &mut packet::Writer)>,
+    ) -> anyhow::Result<()>;
 }
