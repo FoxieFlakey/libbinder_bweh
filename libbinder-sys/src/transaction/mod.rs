@@ -8,7 +8,6 @@ mod not_kernel_managed;
 pub use kernel_managed::TransactionKernelManaged;
 pub use not_kernel_managed::TransactionNotKernelMananged;
 
-#[derive(Clone)]
 pub enum Transaction<'buffer, 'buffer_offsets> {
     NotKernelManaged(TransactionNotKernelMananged<'buffer, 'buffer_offsets>),
     KernelManaged(TransactionKernelManaged),

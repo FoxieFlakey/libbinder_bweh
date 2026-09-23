@@ -7,6 +7,7 @@ use std::{
 use anyhow::{Context, anyhow, bail};
 use enumflags2::BitFlags;
 use libbinder_sys::{
+    BinderUsize,
     commands::Command,
     transaction::{
         Transaction, TransactionDataCommon, TransactionFlag, TransactionNotKernelMananged,
@@ -43,14 +44,13 @@ pub fn lib_main() {
         0x2929,
         object::Flag::OneWay.into(),
         &packet,
-        None,
         SERVICE_MANAGER,
     )
     .unwrap();
 }
 
 pub struct Runtime {
-    binder_dev: OwnedFd,
+    binder_dev: Arc<OwnedFd>,
     _mmap: Mmap,
 }
 
@@ -75,7 +75,7 @@ impl Runtime {
         let rt = Self {
             _mmap: Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
                 .context("Trying to map buffer for binder")?,
-            binder_dev: dev,
+            binder_dev: Arc::new(dev),
         };
         Ok(Arc::new(rt))
     }
@@ -114,20 +114,20 @@ impl Runtime {
         code: u32,
         flags: BitFlags<object::Flag>,
         packet: &Packet,
-        reply: Option<&mut Packet>,
         target: ObjectRef,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<(u32, BitFlags<TransactionFlag>, Packet)>> {
         let mut flags_out = BitFlags::default();
-        if flags.contains(object::Flag::OneWay) {
+        let is_one_way = flags.contains(object::Flag::OneWay);
+        if is_one_way {
             flags_out |= TransactionFlag::OneWay;
         }
 
         let transaction = Transaction::NotKernelManaged(TransactionNotKernelMananged {
             data: TransactionDataCommon {
                 code,
-                data_slice: &packet.data,
+                data_slice: &packet.get_data(),
                 flags: flags_out,
-                offsets: &packet.offsets,
+                offsets: &packet.get_offsets(),
                 target,
             },
         });
@@ -142,6 +142,7 @@ impl Runtime {
             .context("Cannot send packet")?;
         let read = &ret_buf[0..bytes_read];
 
+        let mut reply = None;
         // SAFETY: Kernel jsut wrote it
         for ret in unsafe { RetIterator::new(&read) } {
             match ret {
@@ -153,12 +154,37 @@ impl Runtime {
                 return_parser::RetVal::Transaction(transaction) => {
                     todo!("Handle nested transaction")
                 }
-                return_parser::RetVal::Reply(transaction) => todo!("Handle reply"),
+                return_parser::RetVal::Reply(transaction) => {
+                    assert!(!is_one_way, "Kernel sent reply for one way??");
+                    let code = transaction.get_common().code;
+                    let flags = transaction.get_common().flags;
+                    let kernel = match transaction {
+                        Transaction::KernelManaged(x) => x,
+                        Transaction::NotKernelManaged(_) => {
+                            unreachable!("This has to be from kernel")
+                        }
+                    };
+
+                    if reply.is_some() {
+                        bail!("Kernel sent double reply??")
+                    }
+
+                    reply = Some((
+                        code,
+                        flags,
+                        Packet::from_kernel(self.binder_dev.clone(), kernel),
+                    ));
+                }
                 return_parser::RetVal::DeadBinder(_) => (),
                 return_parser::RetVal::DeadReply => bail!("Target died"),
                 return_parser::RetVal::SpawnLooper => (),
             }
         }
-        Ok(())
+
+        if !is_one_way && reply.is_none() {
+            bail!("Remote didnt send reply")
+        }
+
+        Ok(reply)
     }
 }

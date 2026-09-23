@@ -11,7 +11,6 @@ use crate::{
     },
 };
 
-#[derive(Clone)]
 pub struct TransactionKernelManaged {
     // Cannot specifically make 'static is placeholder mean
     // as long as this struct alive. The getter method turn
