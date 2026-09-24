@@ -1,6 +1,8 @@
 use std::{
+    mem,
     os::fd::{AsFd, OwnedFd},
     path::Path,
+    ptr,
     sync::{Arc, OnceLock, Weak},
     thread::{self, JoinHandle},
 };
@@ -29,7 +31,7 @@ use crate::{
     packet::Packet,
     pipe::Pipe,
     proxy::Proxy,
-    return_parser::RetIterator,
+    return_parser::{RetIterator, RetVal},
 };
 
 mod mmap;
@@ -239,12 +241,13 @@ impl Runtime {
                         Packet::from_kernel(self.binder_dev.clone(), kernel),
                     ));
                 }
-                return_parser::RetVal::DeadBinder(_) => (),
                 return_parser::RetVal::DeadReply => bail!("Target died"),
-                return_parser::RetVal::SpawnLooper => (),
+                x => self.handle_misc_ret(x),
             }
         }
 
+        // The objects are succesfully sent by kernel
+        packet.objects_sent();
         if !is_one_way && reply.is_none() {
             bail!("Remote didnt send reply")
         }
@@ -284,27 +287,60 @@ impl Runtime {
         }
     }
 
+    fn handle_misc_ret(&self, ret: RetVal<'_>) {
+        match ret {
+            return_parser::RetVal::TransactionComplete
+            | return_parser::RetVal::DeadReply
+            | return_parser::RetVal::Ok
+            | return_parser::RetVal::Reply(_)
+            | return_parser::RetVal::Err(_) => panic!("Unexpected"),
+            return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
+                unreachable!("Kernel should not return non kernel managed transaction")
+            }
+            return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
+                self.handle_transaction(transaction);
+            }
+            return_parser::RetVal::DeadBinder(_) => (),
+            return_parser::RetVal::SpawnLooper => (),
+            return_parser::RetVal::AcquireStrong(ObjectRefLocal { data, .. }) => {
+                // SAFETY: Trust da kernel
+                unsafe {
+                    Arc::increment_strong_count(ptr::with_exposed_provenance::<Box<dyn Object>>(
+                        data,
+                    ))
+                };
+            }
+            return_parser::RetVal::ReleaseStrong(ObjectRefLocal { data, .. }) => {
+                // SAFETY: Trust da kernel
+                unsafe {
+                    Arc::decrement_strong_count(ptr::with_exposed_provenance::<Box<dyn Object>>(
+                        data,
+                    ))
+                };
+            }
+            return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
+                // SAFETY: Trust da kernel
+                let weak = unsafe {
+                    Weak::from_raw(ptr::with_exposed_provenance::<Box<dyn Object>>(data))
+                };
+
+                mem::forget(weak.clone());
+                mem::forget(weak);
+            }
+            return_parser::RetVal::ReleaseWeak(ObjectRefLocal { data, .. }) => {
+                // SAFETY: Trust da kernel and then decrement by dropping it
+                unsafe { Weak::from_raw(ptr::with_exposed_provenance::<Box<dyn Object>>(data)) };
+            }
+        }
+    }
+
     fn loop_once(&self) {
         let mut read_buf = [0; READ_BUF_SIZE];
         let read_bytes = self
             .do_read_write(false, &[], &mut read_buf)
             .expect("Cannot read incoming transactions");
         for ret in unsafe { RetIterator::new(&read_buf[..read_bytes]) } {
-            match ret {
-                return_parser::RetVal::TransactionComplete
-                | return_parser::RetVal::DeadReply
-                | return_parser::RetVal::Ok
-                | return_parser::RetVal::Reply(_)
-                | return_parser::RetVal::Err(_) => panic!("Unexpected"),
-                return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
-                    unreachable!("Kernel should not return non kernel managed transaction")
-                }
-                return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
-                    self.handle_transaction(transaction);
-                }
-                return_parser::RetVal::DeadBinder(_) => (),
-                return_parser::RetVal::SpawnLooper => (),
-            }
+            self.handle_misc_ret(ret);
         }
     }
 }

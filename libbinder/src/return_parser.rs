@@ -1,6 +1,7 @@
 use libbinder_sys::{
     BinderUsize,
     transaction::{Transaction, TransactionKernelManaged},
+    types::reference::ObjectRefLocal,
 };
 
 pub struct RetIterator<'a> {
@@ -24,6 +25,10 @@ pub enum RetVal<'buf> {
     DeadBinder(usize),
     DeadReply,
     SpawnLooper,
+    AcquireStrong(ObjectRefLocal),
+    ReleaseStrong(ObjectRefLocal),
+    AcquireWeak(ObjectRefLocal),
+    ReleaseWeak(ObjectRefLocal),
 }
 
 impl<'buf> Iterator for RetIterator<'buf> {
@@ -99,6 +104,62 @@ impl<'buf> Iterator for RetIterator<'buf> {
             libbinder_sys::commands::ReturnVal::Noop => {
                 self.buf = &self.buf[4..];
                 return self.next();
+            }
+            libbinder_sys::commands::ReturnVal::Acquire => {
+                advance_bytes = size_of::<usize>() * 2;
+                let data = usize::from_ne_bytes(
+                    <[u8; size_of::<usize>()]>::try_from(&payload[..size_of::<usize>()])
+                        .expect("Cannot read 'data' portion of BR_ACQUIRE'"),
+                );
+                let extra_data = usize::from_ne_bytes(
+                    <[u8; size_of::<usize>()]>::try_from(
+                        &payload[size_of::<usize>()..size_of::<usize>() * 2],
+                    )
+                    .expect("Cannot read 'extra_data' portion of BR_ACQUIRE'"),
+                );
+                RetVal::AcquireStrong(ObjectRefLocal { data, extra_data })
+            }
+            libbinder_sys::commands::ReturnVal::Release => {
+                advance_bytes = size_of::<usize>() * 2;
+                let data = usize::from_ne_bytes(
+                    <[u8; size_of::<usize>()]>::try_from(&payload[..size_of::<usize>()])
+                        .expect("Cannot read 'data' portion of BR_RELEASE'"),
+                );
+                let extra_data = usize::from_ne_bytes(
+                    <[u8; size_of::<usize>()]>::try_from(
+                        &payload[size_of::<usize>()..size_of::<usize>() * 2],
+                    )
+                    .expect("Cannot read 'extra_data' portion of BR_RELEASE'"),
+                );
+                RetVal::ReleaseStrong(ObjectRefLocal { data, extra_data })
+            }
+            libbinder_sys::commands::ReturnVal::AcquireWeak => {
+                advance_bytes = size_of::<usize>() * 2;
+                let data = usize::from_ne_bytes(
+                    <[u8; size_of::<usize>()]>::try_from(&payload[..size_of::<usize>()])
+                        .expect("Cannot read 'data' portion of BR_INCREFS'"),
+                );
+                let extra_data = usize::from_ne_bytes(
+                    <[u8; size_of::<usize>()]>::try_from(
+                        &payload[size_of::<usize>()..size_of::<usize>() * 2],
+                    )
+                    .expect("Cannot read 'extra_data' portion of BR_INCREFS'"),
+                );
+                RetVal::AcquireWeak(ObjectRefLocal { data, extra_data })
+            }
+            libbinder_sys::commands::ReturnVal::ReleaseWeak => {
+                advance_bytes = size_of::<usize>() * 2;
+                let data = usize::from_ne_bytes(
+                    <[u8; size_of::<usize>()]>::try_from(&payload[..size_of::<usize>()])
+                        .expect("Cannot read 'data' portion of BR_DECREFS'"),
+                );
+                let extra_data = usize::from_ne_bytes(
+                    <[u8; size_of::<usize>()]>::try_from(
+                        &payload[size_of::<usize>()..size_of::<usize>() * 2],
+                    )
+                    .expect("Cannot read 'extra_data' portion of BR_DECREFS'"),
+                );
+                RetVal::ReleaseWeak(ObjectRefLocal { data, extra_data })
             }
             _ => todo!(),
         });

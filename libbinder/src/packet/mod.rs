@@ -19,10 +19,13 @@ use either::Either;
 // make it the only writer
 pub use libbinder_sys::transaction::TransactionFlag;
 use libbinder_sys::{
-    commands::Command, transaction::TransactionKernelManaged, write_read::binder_read_write,
+    commands::Command, transaction::TransactionKernelManaged, types::ObjectParsed,
+    write_read::binder_read_write,
 };
 use nix::errno::Errno;
 pub use passthru::RawFormat as Writer;
+
+use crate::object::Object;
 
 struct Owned {
     data: Vec<u8>,
@@ -119,8 +122,39 @@ impl Packet {
             offsets: owned.offsets,
         }
     }
+
+    // Appropriately does needed strong count increments
+    pub(crate) fn objects_sent(&self) {
+        for_each_object(self.get_data(), self.get_offsets(), |object| match object {
+            ObjectParsed::LocalReference(x) => {
+                // SAFETY: Trust da kernel
+                let reference = unsafe {
+                    Arc::from_raw(ptr::with_exposed_provenance::<Box<dyn Object>>(x.data))
+                };
+                mem::forget(reference.clone());
+                mem::forget(reference);
+            }
+            ObjectParsed::RemoteReference(_) => (),
+        });
+    }
+}
+
+fn for_each_object<F>(data: &[u8], offsets: &[usize], mut func: F)
+where
+    F: FnMut(ObjectParsed),
+{
+    for &offset in offsets {
+        let ty = ObjectParsed::try_from_bytes(&data[offset..]).expect("expecting data is valid");
+        func(ty)
+    }
 }
 
 fn drop_objects(data: &[u8], offsets: &[usize]) {
-    assert!(offsets.len() == 0)
+    for_each_object(data, offsets, |object| match object {
+        ObjectParsed::LocalReference(x) => {
+            // SAFETY: Trust da kernel
+            unsafe { Arc::from_raw(ptr::with_exposed_provenance::<Box<dyn Object>>(x.data)) };
+        }
+        ObjectParsed::RemoteReference(_) => (),
+    });
 }

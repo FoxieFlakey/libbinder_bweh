@@ -2,7 +2,7 @@ use anyhow::{Context, anyhow};
 use bytemuck::{Pod, Zeroable};
 use bytemuck_utils::PodData;
 
-use crate::types::reference::ObjectRefRaw;
+use crate::types::reference::{ObjectRef, ObjectRefLocal, ObjectRefRaw, ObjectRefRemote};
 
 const TYPE_LARGE: u8 = 0x85;
 
@@ -79,4 +79,45 @@ impl Type {
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub(crate) struct ObjectHeaderRaw {
     pub(crate) kind: u32,
+}
+
+pub enum ObjectParsed {
+    LocalReference(ObjectRefLocal),
+    RemoteReference(ObjectRefRemote),
+}
+
+impl ObjectParsed {
+    pub fn try_from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        let ty = Type::try_from_bytes(&bytes[..size_of::<ObjectHeaderRaw>()])
+            .context("Cannot get type")?;
+        Ok(match ty {
+            Type::RemoteReference => {
+                let payload = &bytes[..ty.type_size_with_header()];
+                ObjectParsed::RemoteReference(
+                    match ObjectRef::try_from_bytes(payload)
+                        .context("Cannot parse remote reference")?
+                    {
+                        ObjectRef::Local(_) => unreachable!(),
+                        ObjectRef::Remote(x) => x,
+                    },
+                )
+            }
+            Type::LocalReference => {
+                let payload = &bytes[..ty.type_size_with_header()];
+                ObjectParsed::LocalReference(
+                    match ObjectRef::try_from_bytes(payload)
+                        .context("Cannot parse local reference")?
+                    {
+                        ObjectRef::Local(x) => x,
+                        ObjectRef::Remote(_) => unreachable!(),
+                    },
+                )
+            }
+            Type::WeakRemoteReference => todo!(),
+            Type::WeakLocalReference => todo!(),
+            Type::FileDescriptor => todo!(),
+            Type::FileDescriptorArray => todo!(),
+            Type::ByteBuffer => todo!(),
+        })
+    }
 }

@@ -8,7 +8,7 @@ use crate::{
     packet,
 };
 
-struct Concrete;
+struct Concrete(String);
 
 impl Object for Concrete {
     fn on_transaction(
@@ -18,7 +18,7 @@ impl Object for Concrete {
         _message: &packet::Packet,
         _reply: Option<(&mut u32, &mut BitFlags<object::Flag>, &mut packet::Writer)>,
     ) -> anyhow::Result<()> {
-        println!("Handled code: {code}");
+        println!("Handled code in {}: {code}", self.0);
         Ok(())
     }
 }
@@ -35,7 +35,9 @@ pub fn lib_main() {
             mem::forget(
                 Runtime::new(
                     "/dev/binder",
-                    ContextManagerInfo::Concrete(Arc::new(Box::new(Concrete))),
+                    ContextManagerInfo::Concrete(Arc::new(Box::new(Concrete(
+                        "context manager".to_string(),
+                    )))),
                 )
                 .unwrap(),
             );
@@ -52,6 +54,7 @@ pub fn lib_main() {
 
             let packet = {
                 let mut w = packet::Writer::new();
+                w.write_reference(Arc::new(Box::new(Concrete("app".to_string()))));
                 w.write_u8(0x29);
                 w.write_u64(0x38);
                 w.finish()
