@@ -7,12 +7,12 @@ mod passthru;
 
 use std::{
     mem::ManuallyDrop,
-    os::fd::{AsFd, BorrowedFd, OwnedFd},
+    os::fd::{AsFd, OwnedFd},
     ptr,
     sync::Arc,
 };
 
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use either::Either;
 // Right now the writer is raw format
 // later make this more flexible OR
@@ -21,10 +21,7 @@ pub use libbinder_sys::transaction::TransactionFlag;
 use libbinder_sys::{
     commands::Command, transaction::TransactionKernelManaged, write_read::binder_read_write,
 };
-use nix::{
-    errno::Errno,
-    poll::{PollFd, PollFlags, PollTimeout, poll},
-};
+use nix::errno::Errno;
 pub use passthru::RawFormat as Writer;
 
 struct Owned {
@@ -39,42 +36,17 @@ pub struct Packet {
 
 impl Drop for Packet {
     fn drop(&mut self) {
-        fn do_read_write(
-            binder_dev: BorrowedFd<'_>,
-            mut write_buf: &[u8],
-            mut read_buf: &mut [u8],
-        ) -> anyhow::Result<usize> {
-            let mut total_read_bytes = 0;
-            loop {
-                let mut pollfd = [PollFd::new(
-                    binder_dev.as_fd(),
-                    PollFlags::POLLIN | PollFlags::POLLOUT,
-                )];
-
-                poll(&mut pollfd, PollTimeout::NONE)
-                    .context("Cannot poll until binder device is ready")?;
-
-                if !pollfd[0].revents().unwrap().is_empty() {
-                    match binder_read_write(binder_dev.as_fd(), &write_buf, read_buf) {
-                        Ok((_, read_count)) => return Ok(total_read_bytes + read_count),
-                        Err((Errno::EAGAIN, (write_bytes, read_bytes))) => {
-                            write_buf = &write_buf[write_bytes..];
-                            read_buf = &mut read_buf[read_bytes..];
-                            total_read_bytes += read_bytes;
-                        }
-                        Err((e, ..)) => return Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
-                    }
-                }
-            }
-        }
-
         if let Either::Right(kernel) = &self.inner {
             let mut cmd = Vec::new();
             cmd.extend_from_slice(&Command::FreeBuffer.as_bytes());
             cmd.extend_from_slice(&kernel.get_kernel_buf().to_ne_bytes());
 
-            do_read_write(self.binder_dev.take().unwrap().as_fd(), &cmd, &mut [])
-                .expect("Cannot free binder kernel buffer");
+            match binder_read_write(self.binder_dev.take().unwrap().as_fd(), &cmd, &mut []) {
+                Ok((_, read_count)) => Ok(read_count),
+                Err((Errno::EAGAIN, (_, read_bytes))) => Ok(read_bytes),
+                Err((e, ..)) => Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
+            }
+            .expect("Cannot free binder kernel buffer");
         }
     }
 }

@@ -10,7 +10,8 @@ use enumflags2::BitFlags;
 use libbinder_sys::{
     commands::Command,
     transaction::{
-        Transaction, TransactionDataCommon, TransactionFlag, TransactionNotKernelMananged,
+        Transaction, TransactionDataCommon, TransactionFlag, TransactionKernelManaged,
+        TransactionNotKernelMananged,
     },
     types::reference::{ObjectRef, ObjectRefLocal, ObjectRefRemote},
     write_read::binder_read_write,
@@ -23,7 +24,11 @@ use nix::{
 };
 
 use crate::{
-    mmap::Mmap, object::Object, packet::Packet, pipe::Pipe, proxy::Proxy,
+    mmap::Mmap,
+    object::{Flag, Object},
+    packet::Packet,
+    pipe::Pipe,
+    proxy::Proxy,
     return_parser::RetIterator,
 };
 
@@ -95,37 +100,51 @@ impl Runtime {
             }
         });
 
-        rt.manager.set(match context_manager {
-            ContextManagerInfo::Concrete(manager) => {
-                // We become client, here would be do some calls to binder
-                // to say we're the manager and also remember the concrete
-                libbinder_sys::binder_set_context_mgr(
-                    dev.as_fd(),
-                    &ObjectRefLocal {
-                        data: 0,
-                        extra_data: 0,
-                    },
-                )
-                .context("Cannot become context manager")?;
-                manager
-            }
-            ContextManagerInfo::Remote(builder) => {
-                // We become client, here would be creating local
-                // service manager proxy
-                builder(Proxy {
-                    rt: Arc::downgrade(&rt),
-                    remote_ref: SERVICE_MANAGER,
-                })?
-            }
-        });
+        rt.manager
+            .set(match context_manager {
+                ContextManagerInfo::Concrete(manager) => {
+                    // We become client, here would be do some calls to binder
+                    // to say we're the manager and also remember the concrete
+                    libbinder_sys::binder_set_context_mgr(
+                        dev.as_fd(),
+                        &ObjectRefLocal {
+                            data: 0,
+                            extra_data: 0,
+                        },
+                    )
+                    .context("Cannot become context manager")?;
+                    manager
+                }
+                ContextManagerInfo::Remote(builder) => {
+                    // We become client, here would be creating local
+                    // service manager proxy
+                    builder(Proxy {
+                        rt: Arc::downgrade(&rt),
+                        remote_ref: SERVICE_MANAGER,
+                    })?
+                }
+            })
+            .ok()
+            .unwrap();
         Ok(rt)
     }
 
     pub(crate) fn do_read_write(
         &self,
+        can_block: bool,
         mut write_buf: &[u8],
         mut read_buf: &mut [u8],
     ) -> anyhow::Result<usize> {
+        if !can_block {
+            match binder_read_write(self.binder_dev.as_fd(), &write_buf, read_buf) {
+                Ok((_, read_count)) => return Ok(read_count),
+                Err((Errno::EAGAIN, (_, read_bytes))) => {
+                    return Ok(read_bytes);
+                }
+                Err((e, ..)) => return Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
+            }
+        }
+
         let mut total_read_bytes = 0;
         loop {
             let mut pollfd = [PollFd::new(
@@ -161,11 +180,8 @@ impl Runtime {
         packet: &Packet,
         target: ObjectRef,
     ) -> anyhow::Result<Option<(u32, BitFlags<TransactionFlag>, Packet)>> {
-        let mut flags_out = BitFlags::default();
+        let flags_out = object::Flag::into_raw(flags);
         let is_one_way = flags.contains(object::Flag::OneWay);
-        if is_one_way {
-            flags_out |= TransactionFlag::OneWay;
-        }
 
         let transaction = Transaction::NotKernelManaged(TransactionNotKernelMananged {
             data: TransactionDataCommon {
@@ -183,7 +199,7 @@ impl Runtime {
 
         let mut ret_buf = [0; READ_BUF_SIZE];
         let bytes_read = self
-            .do_read_write(&write_buf, &mut ret_buf)
+            .do_read_write(true, &write_buf, &mut ret_buf)
             .context("Cannot send packet")?;
         let read = &ret_buf[0..bytes_read];
 
@@ -196,8 +212,11 @@ impl Runtime {
                 }
                 return_parser::RetVal::Ok => panic!("Not expecting BR_OK"),
                 return_parser::RetVal::TransactionComplete => (),
-                return_parser::RetVal::Transaction(transaction) => {
-                    todo!("Handle nested transaction")
+                return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
+                    self.handle_transaction(transaction);
+                }
+                return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
+                    unreachable!("Kernel should not return not kernel managed transactions")
                 }
                 return_parser::RetVal::Reply(transaction) => {
                     assert!(!is_one_way, "Kernel sent reply for one way??");
@@ -234,10 +253,41 @@ impl Runtime {
     }
 
     // handle transaction that comes
-    fn handle_transaction(&self) {
+    fn handle_transaction(&self, transaction: TransactionKernelManaged) {
+        let target = match transaction.get_data().target {
+            ObjectRef::Local(x) => x,
+            ObjectRef::Remote(_) => {
+                panic!("Should not receive reference to remote object")
+            }
+        };
+
+        let code = transaction.get_data().code;
+        let flags = object::Flag::from_raw(transaction.get_data().flags);
+        let packet = Packet::from_kernel(self.binder_dev.clone(), transaction);
+
+        let mut reply = packet::Writer::new();
+        let mut reply_code = 0;
+        let mut reply_flags = Default::default();
+        let reply_option = if flags.contains(Flag::OneWay) {
+            None
+        } else {
+            Some((&mut reply_code, &mut reply_flags, &mut reply))
+        };
+
+        if target.data == 0 && target.extra_data == 0 {
+            // Special meaning that this is service manager
+            self.get_manager()
+                .on_transaction(code, flags, &packet, reply_option)
+                .expect("Cannot perform transaction");
+        } else {
+            todo!("handle non manager transaction")
+        }
+    }
+
+    fn loop_once(&self) {
         let mut read_buf = [0; READ_BUF_SIZE];
         let read_bytes = self
-            .do_read_write(&[], &mut read_buf)
+            .do_read_write(false, &[], &mut read_buf)
             .expect("Cannot read incoming transactions");
         for ret in unsafe { RetIterator::new(&read_buf[..read_bytes]) } {
             match ret {
@@ -246,8 +296,11 @@ impl Runtime {
                 | return_parser::RetVal::Ok
                 | return_parser::RetVal::Reply(_)
                 | return_parser::RetVal::Err(_) => panic!("Unexpected"),
-                return_parser::RetVal::Transaction(transaction) => {
-                    todo!("handle transaction")
+                return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
+                    unreachable!("Kernel should not return non kernel managed transaction")
+                }
+                return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
+                    self.handle_transaction(transaction);
                 }
                 return_parser::RetVal::DeadBinder(_) => (),
                 return_parser::RetVal::SpawnLooper => (),
@@ -257,6 +310,11 @@ impl Runtime {
 }
 
 fn worker(dev: Arc<OwnedFd>, shutdown_pipe: Arc<Pipe<bool>>, runtime: Weak<Runtime>) {
+    if let Some(x) = runtime.upgrade() {
+        x.do_read_write(true, &Command::EnterLooper.as_bytes(), &mut [])
+            .expect("Cannot enter as looper");
+    }
+
     loop {
         let mut pollfd = [
             PollFd::new(dev.as_fd(), PollFlags::POLLIN),
@@ -271,7 +329,7 @@ fn worker(dev: Arc<OwnedFd>, shutdown_pipe: Arc<Pipe<bool>>, runtime: Weak<Runti
 
         if !pollfd[0].revents().unwrap().is_empty() {
             if let Some(x) = runtime.upgrade() {
-                x.handle_transaction();
+                x.loop_once();
             } else {
                 // This might indicate runtime has shutdown BUT there race that
                 // this might be reached BEFORE the runtime init completed
@@ -281,4 +339,8 @@ fn worker(dev: Arc<OwnedFd>, shutdown_pipe: Arc<Pipe<bool>>, runtime: Weak<Runti
     }
 
     println!("Shutdown triggered, quiting...");
+    if let Some(x) = runtime.upgrade() {
+        x.do_read_write(true, &Command::ExitLooper.as_bytes(), &mut [])
+            .expect("Cannot exit as looper");
+    }
 }
