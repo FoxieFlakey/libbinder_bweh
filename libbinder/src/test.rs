@@ -35,7 +35,7 @@ pub fn lib_main() {
             mem::forget(
                 Runtime::new(
                     "/dev/binder",
-                    ContextManagerInfo::Concrete(Arc::new(Concrete)),
+                    ContextManagerInfo::Concrete(Arc::new(Box::new(Concrete))),
                 )
                 .unwrap(),
             );
@@ -46,7 +46,7 @@ pub fn lib_main() {
         Some("app") => {
             let rt = Runtime::new(
                 "/dev/binder",
-                ContextManagerInfo::Remote(Box::new(|x| Ok(Arc::new(x)))),
+                ContextManagerInfo::Remote(Box::new(|x| Ok(Arc::new(Box::new(x))))),
             )
             .unwrap();
 

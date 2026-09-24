@@ -46,7 +46,7 @@ pub struct Runtime {
     binder_dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
     join_handle: JoinHandle<()>,
-    manager: OnceLock<Arc<dyn Object>>,
+    manager: OnceLock<Arc<Box<dyn Object>>>,
     _mmap: Mmap,
 }
 
@@ -67,8 +67,8 @@ const SERVICE_MANAGER: ObjectRefRemote = ObjectRefRemote {
 pub const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 pub enum ContextManagerInfo {
-    Concrete(Arc<dyn Object>),
-    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<dyn Object>>>),
+    Concrete(Arc<Box<dyn Object>>),
+    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<Box<dyn Object>>>>),
 }
 
 impl Runtime {
@@ -169,7 +169,7 @@ impl Runtime {
         }
     }
 
-    pub fn get_manager(&self) -> &Arc<dyn Object> {
+    pub fn get_manager(&self) -> &Arc<Box<dyn Object>> {
         self.manager.get().expect("Manager is not initialized")
     }
 
