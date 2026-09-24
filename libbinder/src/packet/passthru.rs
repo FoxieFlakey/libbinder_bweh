@@ -1,6 +1,8 @@
-use libbinder_sys::types::reference::ObjectRef;
+use std::sync::Arc;
 
-use crate::packet::Packet;
+use libbinder_sys::types::reference::{ObjectRef, ObjectRefLocal};
+
+use crate::{object::Object, packet::Packet};
 
 // A very simple format, passing data as it is
 // it is unportable because usize and platform
@@ -10,6 +12,12 @@ use crate::packet::Packet;
 pub struct RawFormat {
     pub(super) data: Vec<u8>,
     pub(super) offsets: Vec<usize>,
+}
+
+impl Drop for RawFormat {
+    fn drop(&mut self) {
+        super::drop_objects(&self.data, &self.offsets);
+    }
 }
 
 impl RawFormat {
@@ -60,13 +68,17 @@ impl RawFormat {
         self.data.extend_from_slice(&data.to_ne_bytes());
     }
 
-    pub fn write_reference(&mut self, reference: &ObjectRef) {
+    pub fn write_reference(&mut self, reference: Arc<Box<dyn Object>>) {
         assert!(
             self.data.len().is_multiple_of(4),
             "Binder objects must be at offset of multiple of four"
         );
 
         self.offsets.push(self.data.len());
-        reference.with_raw_bytes(|bytes| self.data.extend_from_slice(bytes))
+        let reference_raw = ObjectRef::Local(ObjectRefLocal {
+            data: Arc::into_raw(reference).addr(),
+            extra_data: 0,
+        });
+        reference_raw.with_raw_bytes(|bytes| self.data.extend_from_slice(bytes));
     }
 }

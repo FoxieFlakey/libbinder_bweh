@@ -6,7 +6,7 @@
 mod passthru;
 
 use std::{
-    mem::ManuallyDrop,
+    mem::{self, ManuallyDrop},
     os::fd::{AsFd, OwnedFd},
     ptr,
     sync::Arc,
@@ -36,28 +36,32 @@ pub struct Packet {
 
 impl Drop for Packet {
     fn drop(&mut self) {
-        if let Either::Right(kernel) = &self.inner {
-            let mut cmd = Vec::new();
-            cmd.extend_from_slice(&Command::FreeBuffer.as_bytes());
-            cmd.extend_from_slice(&kernel.get_kernel_buf().to_ne_bytes());
+        match &self.inner {
+            Either::Right(kernel) => {
+                let mut cmd = Vec::new();
+                cmd.extend_from_slice(&Command::FreeBuffer.as_bytes());
+                cmd.extend_from_slice(&kernel.get_kernel_buf().to_ne_bytes());
 
-            match binder_read_write(self.binder_dev.take().unwrap().as_fd(), &cmd, &mut []) {
-                Ok((_, read_count)) => Ok(read_count),
-                Err((Errno::EAGAIN, (_, read_bytes))) => Ok(read_bytes),
-                Err((e, ..)) => Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
+                match binder_read_write(self.binder_dev.take().unwrap().as_fd(), &cmd, &mut []) {
+                    Ok((_, read_count)) => Ok(read_count),
+                    Err((Errno::EAGAIN, (_, read_bytes))) => Ok(read_bytes),
+                    Err((e, ..)) => Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
+                }
+                .expect("Cannot free binder kernel buffer");
             }
-            .expect("Cannot free binder kernel buffer");
+
+            Either::Left(owned) => drop_objects(&owned.data, &owned.offsets),
         }
     }
 }
 
 impl Writer {
-    pub fn finish(self) -> Packet {
+    pub fn finish(mut self) -> Packet {
         Packet {
             binder_dev: None,
             inner: Either::Left(Owned {
-                data: self.data,
-                offsets: self.offsets,
+                data: mem::take(&mut self.data),
+                offsets: mem::take(&mut self.offsets),
             }),
         }
     }
@@ -115,4 +119,8 @@ impl Packet {
             offsets: owned.offsets,
         }
     }
+}
+
+fn drop_objects(data: &[u8], offsets: &[usize]) {
+    assert!(offsets.len() == 0)
 }
