@@ -8,7 +8,7 @@ mod writer;
 
 use std::{
     mem::{self, ManuallyDrop},
-    os::fd::{AsFd, OwnedFd},
+    os::fd::AsFd,
     ptr,
     sync::Arc,
 };
@@ -26,7 +26,7 @@ use libbinder_sys::{
 use nix::errno::Errno;
 pub use writer::Writer;
 
-use crate::{object::Object, packet::reader::Reader};
+use crate::{Runtime, object::ObjectTrait, packet::reader::Reader};
 
 struct Owned {
     data: Vec<u8>,
@@ -34,7 +34,7 @@ struct Owned {
 }
 
 pub struct Packet {
-    binder_dev: Option<Arc<OwnedFd>>,
+    runtime: Arc<Runtime>,
     inner: Either<Owned, TransactionKernelManaged>,
 }
 
@@ -46,7 +46,7 @@ impl Drop for Packet {
                 cmd.extend_from_slice(&Command::FreeBuffer.as_bytes());
                 cmd.extend_from_slice(&kernel.get_kernel_buf().to_ne_bytes());
 
-                match binder_read_write(self.binder_dev.take().unwrap().as_fd(), &cmd, &mut []) {
+                match binder_read_write(self.runtime.binder_dev.as_fd(), &cmd, &mut []) {
                     Ok((_, read_count)) => Ok(read_count),
                     Err((Errno::EAGAIN, (_, read_bytes))) => Ok(read_bytes),
                     Err((e, ..)) => Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
@@ -54,7 +54,7 @@ impl Drop for Packet {
                 .expect("Cannot free binder kernel buffer");
             }
 
-            Either::Left(owned) => drop_objects(&owned.data, &owned.offsets),
+            Either::Left(owned) => drop_objects(&self.runtime, &owned.data, &owned.offsets),
         }
     }
 }
@@ -68,7 +68,7 @@ impl Packet {
         new_offsets.extend_from_slice(self.get_offsets());
 
         Self {
-            binder_dev: None,
+            runtime: self.runtime.clone(),
             inner: Either::Left(Owned {
                 data: new_data,
                 offsets: new_offsets,
@@ -80,9 +80,9 @@ impl Packet {
         Reader::new(self)
     }
 
-    pub(crate) fn from_kernel(binder_dev: Arc<OwnedFd>, kernel: TransactionKernelManaged) -> Self {
+    pub(crate) fn from_kernel(runtime: Arc<Runtime>, kernel: TransactionKernelManaged) -> Self {
         Self {
-            binder_dev: Some(binder_dev),
+            runtime: runtime,
             inner: Either::Right(kernel),
         }
     }
@@ -102,6 +102,7 @@ impl Packet {
     }
 
     pub fn writer(self) -> Writer {
+        let runtime = self.runtime.clone();
         let packet = ManuallyDrop::new(self.into_owned());
         // SAFETY: Just wanted to move 'inner' out without trigger drop code
         // the binder_dev must be None here, so no drop code need to run and drop code
@@ -109,7 +110,7 @@ impl Packet {
         let owned = unsafe { ptr::read(&packet.inner) }.left().unwrap();
 
         // SAFETY: We just make exclusive ownership of binder objects
-        unsafe { Writer::from_existing(owned.data, owned.offsets) }
+        unsafe { Writer::from_existing(runtime, owned.data, owned.offsets) }
     }
 
     // Appropriately does needed strong count increments
@@ -123,7 +124,7 @@ impl Packet {
             ObjectParsed::LocalReference(x) => {
                 // SAFETY: Trust da kernel
                 let reference = unsafe {
-                    Arc::from_raw(ptr::with_exposed_provenance::<Box<dyn Object>>(x.data))
+                    Arc::from_raw(ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(x.data))
                 };
                 mem::forget(reference.clone());
                 mem::forget(reference);
@@ -143,11 +144,11 @@ where
     }
 }
 
-fn drop_objects(data: &[u8], offsets: &[usize]) {
+fn drop_objects(_runtime: &Runtime, data: &[u8], offsets: &[usize]) {
     for_each_object(data, offsets, |object| match object {
         ObjectParsed::LocalReference(x) => {
             // SAFETY: Trust da kernel
-            unsafe { Arc::from_raw(ptr::with_exposed_provenance::<Box<dyn Object>>(x.data)) };
+            unsafe { Arc::from_raw(ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(x.data)) };
         }
         ObjectParsed::RemoteReference(_) => (),
     });

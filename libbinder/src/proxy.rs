@@ -10,7 +10,7 @@ use libbinder_sys::{
 
 use crate::{
     Runtime,
-    object::{self, Object},
+    object::{self, ObjectTrait},
 };
 
 pub struct Proxy {
@@ -18,7 +18,7 @@ pub struct Proxy {
     pub(crate) remote_ref: ObjectRefRemote,
 }
 
-impl Object for Proxy {
+impl ObjectTrait for Proxy {
     fn on_transaction(
         &self,
         code: u32,

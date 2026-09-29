@@ -29,7 +29,7 @@ impl Flag {
     }
 }
 
-pub trait Object: Sync + Send + Any + 'static {
+pub trait ObjectTrait: Sync + Send + Any + 'static {
     fn on_transaction(
         &self,
         code: u32,

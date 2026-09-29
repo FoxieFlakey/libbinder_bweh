@@ -4,24 +4,27 @@ use either::Either;
 use libbinder_sys::types::reference::{ObjectRef, ObjectRefLocal};
 
 use crate::{
-    object::Object,
+    Runtime,
+    object::ObjectTrait,
     packet::{Owned, Packet},
 };
 
 pub struct Writer {
+    runtime: Arc<Runtime>,
     data: Vec<u8>,
     offsets: Vec<usize>,
 }
 
 impl Drop for Writer {
     fn drop(&mut self) {
-        super::drop_objects(&self.data, &self.offsets);
+        super::drop_objects(&self.runtime, &self.data, &self.offsets);
     }
 }
 
 impl Writer {
-    pub fn new() -> Self {
+    pub fn new(runtime: Arc<Runtime>) -> Self {
         Self {
+            runtime,
             data: Vec::new(),
             offsets: Vec::new(),
         }
@@ -30,8 +33,16 @@ impl Writer {
     // # Safety
     // By doing this you are transfering ownership of all binder objects
     // to the writer
-    pub(super) unsafe fn from_existing(data: Vec<u8>, offsets: Vec<usize>) -> Self {
-        Self { data, offsets }
+    pub(super) unsafe fn from_existing(
+        runtime: Arc<Runtime>,
+        data: Vec<u8>,
+        offsets: Vec<usize>,
+    ) -> Self {
+        Self {
+            runtime,
+            data,
+            offsets,
+        }
     }
 
     pub fn copy_from(&mut self, other: &Packet) {
@@ -56,7 +67,7 @@ impl Writer {
 
     pub fn finish(mut self) -> Packet {
         Packet {
-            binder_dev: None,
+            runtime: self.runtime.clone(),
             inner: Either::Left(Owned {
                 data: mem::take(&mut self.data),
                 offsets: mem::take(&mut self.offsets),
@@ -71,7 +82,7 @@ impl Writer {
         self.data.extend_from_slice(bytes.as_ref());
     }
 
-    pub fn write_reference(&mut self, reference: Arc<Box<dyn Object>>) {
+    pub fn write_reference(&mut self, reference: Arc<Box<dyn ObjectTrait>>) {
         assert!(
             self.data.len().is_multiple_of(4),
             "Binder objects must be at offset of multiple of four"

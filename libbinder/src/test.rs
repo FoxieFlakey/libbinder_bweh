@@ -4,13 +4,13 @@ use enumflags2::BitFlags;
 
 use crate::{
     ContextManagerInfo, Runtime,
-    object::{self, Object},
+    object::{self, ObjectTrait},
     packet,
 };
 
 struct Concrete(String);
 
-impl Object for Concrete {
+impl ObjectTrait for Concrete {
     fn on_transaction(
         &self,
         code: u32,
@@ -53,7 +53,7 @@ pub fn lib_main() {
             .unwrap();
 
             let packet = {
-                let mut w = packet::Writer::new();
+                let mut w = packet::Writer::new(rt.clone());
                 w.write_reference(Arc::new(Box::new(Concrete("app".to_string()))));
                 w.write_bytes(0x29u8.to_ne_bytes());
                 w.write_bytes(0x38u32.to_ne_bytes());

@@ -27,7 +27,7 @@ use nix::{
 
 use crate::{
     mmap::Mmap,
-    object::{Flag, Object},
+    object::{Flag, ObjectTrait},
     packet::Packet,
     pipe::Pipe,
     proxy::Proxy,
@@ -48,7 +48,7 @@ pub struct Runtime {
     binder_dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
     join_handle: JoinHandle<()>,
-    manager: OnceLock<Arc<Box<dyn Object>>>,
+    manager: OnceLock<Arc<Box<dyn ObjectTrait>>>,
     _mmap: Mmap,
 }
 
@@ -69,8 +69,8 @@ const SERVICE_MANAGER: ObjectRefRemote = ObjectRefRemote {
 pub const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 pub enum ContextManagerInfo {
-    Concrete(Arc<Box<dyn Object>>),
-    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<Box<dyn Object>>>>),
+    Concrete(Arc<Box<dyn ObjectTrait>>),
+    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<Box<dyn ObjectTrait>>>>),
 }
 
 impl Runtime {
@@ -171,12 +171,12 @@ impl Runtime {
         }
     }
 
-    pub fn get_manager(&self) -> &Arc<Box<dyn Object>> {
+    pub fn get_manager(&self) -> &Arc<Box<dyn ObjectTrait>> {
         self.manager.get().expect("Manager is not initialized")
     }
 
     pub(crate) fn send_packet(
-        &self,
+        self: &Arc<Runtime>,
         code: u32,
         flags: BitFlags<object::Flag>,
         packet: &Packet,
@@ -235,11 +235,7 @@ impl Runtime {
                         bail!("Kernel sent double reply??")
                     }
 
-                    reply = Some((
-                        code,
-                        flags,
-                        Packet::from_kernel(self.binder_dev.clone(), kernel),
-                    ));
+                    reply = Some((code, flags, Packet::from_kernel(self.clone(), kernel)));
                 }
                 return_parser::RetVal::DeadReply => bail!("Target died"),
                 x => self.handle_misc_ret(x),
@@ -256,7 +252,7 @@ impl Runtime {
     }
 
     // handle transaction that comes
-    fn handle_transaction(&self, transaction: TransactionKernelManaged) {
+    fn handle_transaction(self: &Arc<Runtime>, transaction: TransactionKernelManaged) {
         let target = match transaction.get_data().target {
             ObjectRef::Local(x) => x,
             ObjectRef::Remote(_) => {
@@ -266,9 +262,9 @@ impl Runtime {
 
         let code = transaction.get_data().code;
         let flags = object::Flag::from_raw(transaction.get_data().flags);
-        let packet = Packet::from_kernel(self.binder_dev.clone(), transaction);
+        let packet = Packet::from_kernel(self.clone(), transaction);
 
-        let mut reply = packet::Writer::new();
+        let mut reply = packet::Writer::new(self.clone());
         let mut reply_code = 0;
         let mut reply_flags = Default::default();
         let reply_option = if flags.contains(Flag::OneWay) {
@@ -287,7 +283,7 @@ impl Runtime {
         }
     }
 
-    fn handle_misc_ret(&self, ret: RetVal<'_>) {
+    fn handle_misc_ret(self: &Arc<Runtime>, ret: RetVal<'_>) {
         match ret {
             return_parser::RetVal::TransactionComplete
             | return_parser::RetVal::DeadReply
@@ -305,23 +301,23 @@ impl Runtime {
             return_parser::RetVal::AcquireStrong(ObjectRefLocal { data, .. }) => {
                 // SAFETY: Trust da kernel
                 unsafe {
-                    Arc::increment_strong_count(ptr::with_exposed_provenance::<Box<dyn Object>>(
-                        data,
-                    ))
+                    Arc::increment_strong_count(
+                        ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(data),
+                    )
                 };
             }
             return_parser::RetVal::ReleaseStrong(ObjectRefLocal { data, .. }) => {
                 // SAFETY: Trust da kernel
                 unsafe {
-                    Arc::decrement_strong_count(ptr::with_exposed_provenance::<Box<dyn Object>>(
-                        data,
-                    ))
+                    Arc::decrement_strong_count(
+                        ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(data),
+                    )
                 };
             }
             return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
                 // SAFETY: Trust da kernel
                 let weak = unsafe {
-                    Weak::from_raw(ptr::with_exposed_provenance::<Box<dyn Object>>(data))
+                    Weak::from_raw(ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(data))
                 };
 
                 mem::forget(weak.clone());
@@ -329,12 +325,14 @@ impl Runtime {
             }
             return_parser::RetVal::ReleaseWeak(ObjectRefLocal { data, .. }) => {
                 // SAFETY: Trust da kernel and then decrement by dropping it
-                unsafe { Weak::from_raw(ptr::with_exposed_provenance::<Box<dyn Object>>(data)) };
+                unsafe {
+                    Weak::from_raw(ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(data))
+                };
             }
         }
     }
 
-    fn loop_once(&self) {
+    fn loop_once(self: &Arc<Runtime>) {
         let mut read_buf = [0; READ_BUF_SIZE];
         let read_bytes = self
             .do_read_write(false, &[], &mut read_buf)

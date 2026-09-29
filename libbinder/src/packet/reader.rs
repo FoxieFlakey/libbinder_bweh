@@ -3,7 +3,7 @@ use std::sync::Arc;
 use either::Either;
 use thiserror::Error;
 
-use crate::{object::Object, packet::Packet, proxy::Proxy};
+use crate::{object::ObjectTrait, packet::Packet, proxy::Proxy};
 
 pub struct Reader<'a> {
     data: &'a [u8],
@@ -40,7 +40,7 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
-    pub fn read_reference(&mut self) -> Result<Either<Arc<Box<dyn Object>>, Proxy>, Error> {
+    pub fn read_reference(&mut self) -> Result<Either<Arc<Box<dyn ObjectTrait>>, Proxy>, Error> {
         todo!()
     }
 }
