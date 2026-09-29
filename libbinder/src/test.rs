@@ -4,7 +4,7 @@ use enumflags2::BitFlags;
 
 use crate::{
     ContextManagerInfo, Runtime,
-    object::{self, ObjectTrait},
+    object::{self, B, ObjectTrait},
     packet,
 };
 
@@ -35,7 +35,9 @@ pub fn lib_main() {
             mem::forget(
                 Runtime::new(
                     "/dev/binder",
-                    ContextManagerInfo::Concrete(Arc::new(Concrete("context manager".to_string()))),
+                    ContextManagerInfo::Concrete(Arc::new(B::new(Concrete(
+                        "context manager".to_string(),
+                    )))),
                 )
                 .unwrap(),
             );
@@ -46,13 +48,13 @@ pub fn lib_main() {
         Some("app") => {
             let rt = Runtime::new(
                 "/dev/binder",
-                ContextManagerInfo::Remote(Box::new(|x| Ok(Arc::new(x)))),
+                ContextManagerInfo::Remote(Box::new(|x| Ok(Arc::new(B::new(x))))),
             )
             .unwrap();
 
             let packet = {
                 let mut w = packet::Writer::new(rt.clone());
-                w.write_reference(Arc::new(Concrete("app".to_string())));
+                w.write_reference(Arc::new(B::new(Concrete("app".to_string()))));
                 w.write_bytes(0x29u8.to_ne_bytes());
                 w.write_bytes(0x38u32.to_ne_bytes());
                 w.finish()

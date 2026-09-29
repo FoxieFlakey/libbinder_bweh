@@ -1,7 +1,7 @@
 use std::{
     os::fd::{AsFd, OwnedFd},
     path::Path,
-    sync::{Arc, OnceLock, RwLock, Weak},
+    sync::{Arc, OnceLock, Weak},
     thread::{self, JoinHandle},
 };
 
@@ -26,7 +26,7 @@ use sharded_slab::Slab;
 
 use crate::{
     mmap::Mmap,
-    object::{Flag, ObjectTrait},
+    object::{B, Flag, ObjectTrait},
     packet::Packet,
     pipe::Pipe,
     proxy::Proxy,
@@ -47,19 +47,9 @@ pub struct Runtime {
     binder_dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
     join_handle: JoinHandle<()>,
-    manager: OnceLock<Arc<dyn ObjectTrait>>,
-    local_objects: Slab<ObjectMetadata>,
+    manager: OnceLock<Arc<B<dyn ObjectTrait>>>,
+    local_objects: Slab<Arc<B<dyn ObjectTrait>>>,
     _mmap: Mmap,
-}
-
-struct ObjectMetadata {
-    inner: Arc<dyn ObjectTrait>,
-    control: RwLock<Refs>,
-}
-
-struct Refs {
-    has_strong: bool,
-    has_weak: bool,
 }
 
 impl Drop for Runtime {
@@ -79,8 +69,8 @@ const SERVICE_MANAGER: ObjectRefRemote = ObjectRefRemote {
 pub const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 pub enum ContextManagerInfo {
-    Concrete(Arc<dyn ObjectTrait>),
-    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<dyn ObjectTrait>>>),
+    Concrete(Arc<B<dyn ObjectTrait>>),
+    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<B<dyn ObjectTrait>>>>),
 }
 
 impl Runtime {
@@ -115,21 +105,15 @@ impl Runtime {
 
         let mgr = match context_manager {
             ContextManagerInfo::Concrete(manager) => {
+                let id = rt.add_object(manager.clone());
+                manager.control.write().unwrap().has_strong = true;
+
                 // We become client, here would be do some calls to binder
                 // to say we're the manager and also remember the concrete
                 libbinder_sys::binder_set_context_mgr(
                     dev.as_fd(),
                     &ObjectRefLocal {
-                        data: rt
-                            .local_objects
-                            .insert(ObjectMetadata {
-                                inner: manager.clone(),
-                                control: RwLock::new(Refs {
-                                    has_strong: true,
-                                    has_weak: false,
-                                }),
-                            })
-                            .unwrap(),
+                        data: id,
                         extra_data: 0,
                     },
                 )
@@ -139,14 +123,36 @@ impl Runtime {
             ContextManagerInfo::Remote(builder) => {
                 // We become client, here would be creating local
                 // service manager proxy
-                builder(Proxy {
+                let mgr = builder(Proxy {
                     rt: Arc::downgrade(&rt),
                     remote_ref: SERVICE_MANAGER,
-                })?
+                })?;
+                rt.add_object(mgr.clone());
+                mgr
             }
         };
         rt.manager.set(mgr).ok().unwrap();
         Ok(rt)
+    }
+
+    fn add_object(self: &Arc<Runtime>, object: Arc<B<dyn ObjectTrait>>) -> usize {
+        let mut control = object.control.write().unwrap();
+        let id;
+        if let Some((idx, weak_rt)) = &control.live_slot {
+            if !Weak::ptr_eq(&Arc::downgrade(self), weak_rt) {
+                panic!("Attempting to use object belonging to other runtime!");
+            }
+            id = *idx;
+            drop(control);
+        } else {
+            let entry = self.local_objects.vacant_entry().unwrap();
+            id = entry.key();
+            control.live_slot = Some((id, Arc::downgrade(self)));
+            drop(control);
+            entry.insert(object);
+        }
+
+        id
     }
 
     pub(crate) fn do_read_write(
@@ -189,7 +195,7 @@ impl Runtime {
         }
     }
 
-    pub fn get_manager(&self) -> &Arc<dyn ObjectTrait> {
+    pub fn get_manager(&self) -> &Arc<B<dyn ObjectTrait>> {
         self.manager.get().expect("Manager is not initialized")
     }
 
@@ -297,8 +303,7 @@ impl Runtime {
             panic!("Attempting to handle transaction on object that was already removed")
         }
 
-        meta.inner
-            .on_transaction(code, flags, &packet, reply_option)
+        meta.on_transaction(code, flags, &packet, reply_option)
             .expect("Cannot perform transaction");
     }
 

@@ -1,6 +1,13 @@
-use std::any::Any;
+use std::{
+    any::Any,
+    ops::Deref,
+    sync::{RwLock, Weak},
+};
 
-use crate::packet::{self, Packet};
+use crate::{
+    Runtime,
+    packet::{self, Packet},
+};
 use enumflags2::{BitFlags, bitflags};
 use libbinder_sys::transaction::TransactionFlag;
 
@@ -37,4 +44,36 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
         message: &Packet,
         reply: Option<(&mut u32, &mut BitFlags<Flag>, &mut packet::Writer)>,
     ) -> anyhow::Result<()>;
+}
+
+pub struct B<T: ObjectTrait + ?Sized> {
+    pub(crate) control: RwLock<Refs>,
+    inner: T,
+}
+
+impl<T: ObjectTrait> B<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            control: RwLock::new(Refs {
+                has_strong: false,
+                has_weak: false,
+                live_slot: None,
+            }),
+            inner: data,
+        }
+    }
+}
+
+impl<T: ObjectTrait + ?Sized> Deref for B<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+pub(crate) struct Refs {
+    pub(crate) live_slot: Option<(usize, Weak<Runtime>)>,
+    pub(crate) has_strong: bool,
+    pub(crate) has_weak: bool,
 }
