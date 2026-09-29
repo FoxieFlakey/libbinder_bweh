@@ -1,7 +1,9 @@
+#![feature(oneshot_channel)]
+
 use std::{
     os::fd::{AsFd, OwnedFd},
     path::Path,
-    sync::{Arc, OnceLock, Weak},
+    sync::{Arc, OnceLock, Weak, oneshot},
     thread::{self, JoinHandle},
 };
 
@@ -69,7 +71,7 @@ const SERVICE_MANAGER: ObjectRefRemote = ObjectRefRemote {
 pub const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 pub enum ContextManagerInfo {
-    Concrete(Arc<B<dyn ObjectTrait>>),
+    Concrete(Box<dyn FnOnce(&Arc<Runtime>) -> anyhow::Result<Arc<B<dyn ObjectTrait>>>>),
     Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<B<dyn ObjectTrait>>>>),
 }
 
@@ -79,17 +81,14 @@ impl Runtime {
         P: AsRef<Path>,
     {
         let dev = Arc::new(
-            open(
-                path.as_ref(),
-                OFlag::O_RDWR | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
-                Mode::all(),
-            )
-            .context("Opening binder dev")?,
+            open(path.as_ref(), OFlag::O_RDWR | OFlag::O_CLOEXEC, Mode::all())
+                .context("Opening binder dev")?,
         );
 
         let shutdown_pipe = Arc::new(Pipe::new().context("Creating shutdown pipe")?);
         let mmap = Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
             .context("Trying to map buffer for binder")?;
+        let (init_done_send, init_done_recv) = oneshot::channel();
         let rt = Arc::new_cyclic(|weak| {
             let weak = weak.clone();
             let dev = dev.clone();
@@ -98,13 +97,16 @@ impl Runtime {
                 binder_dev: dev.clone(),
                 shutdown_pipe: shutdown_pipe.clone(),
                 manager: OnceLock::new(),
-                join_handle: thread::spawn(move || worker(dev, shutdown_pipe, weak.clone())),
+                join_handle: thread::spawn(move || {
+                    worker(dev, shutdown_pipe, init_done_recv, weak.clone())
+                }),
                 local_objects: Slab::new(),
             }
         });
 
         let mgr = match context_manager {
             ContextManagerInfo::Concrete(manager) => {
+                let manager = manager(&rt)?;
                 let id = rt.add_object(manager.clone());
                 manager.control.write().unwrap().has_strong = true;
 
@@ -132,6 +134,8 @@ impl Runtime {
             }
         };
         rt.manager.set(mgr).ok().unwrap();
+
+        init_done_send.send(()).unwrap();
         Ok(rt)
     }
 
@@ -161,11 +165,14 @@ impl Runtime {
         mut write_buf: &[u8],
         mut read_buf: &mut [u8],
     ) -> anyhow::Result<usize> {
-        if !can_block {
+        if true {
             match binder_read_write(self.binder_dev.as_fd(), &write_buf, read_buf) {
-                Ok((_, read_count)) => return Ok(read_count),
-                Err((Errno::EAGAIN, (_, read_bytes))) => {
-                    return Ok(read_bytes);
+                Ok((write_size, read_count)) => {
+                    assert!(
+                        write_size == write_buf.len(),
+                        "kernel didnt process everything"
+                    );
+                    return Ok(read_count);
                 }
                 Err((e, ..)) => return Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
             }
@@ -222,54 +229,78 @@ impl Runtime {
         let mut write_buf = Vec::new();
         write_buf.extend_from_slice(&Command::SendTransaction.as_bytes());
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
+        self.do_read_write(true, &write_buf, &mut [])
+            .context("Cannot send packet")?;
 
         let mut ret_buf = [0; READ_BUF_SIZE];
-        let bytes_read = self
-            .do_read_write(true, &write_buf, &mut ret_buf)
-            .context("Cannot send packet")?;
-        let read = &ret_buf[0..bytes_read];
-
         let mut reply = None;
-        // SAFETY: Kernel jsut wrote it
-        for ret in unsafe { RetIterator::new(&read) } {
-            match ret {
-                return_parser::RetVal::Err(e) => {
-                    bail!("Error sending packet (kernel returned BR_ERROR): {e}")
-                }
-                return_parser::RetVal::Ok => panic!("Not expecting BR_OK"),
-                return_parser::RetVal::TransactionComplete => (),
-                return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
-                    self.handle_transaction(transaction);
-                }
-                return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
-                    unreachable!("Kernel should not return not kernel managed transactions")
-                }
-                return_parser::RetVal::Reply(transaction) => {
-                    assert!(!is_one_way, "Kernel sent reply for one way??");
-                    let code = transaction.get_common().code;
-                    let flags = transaction.get_common().flags;
-                    let kernel = match transaction {
-                        Transaction::KernelManaged(x) => x,
-                        Transaction::NotKernelManaged(_) => {
-                            unreachable!("This has to be from kernel")
-                        }
-                    };
+        let mut is_completed = false;
+        let mut is_first_time = true;
 
-                    if reply.is_some() {
-                        bail!("Kernel sent double reply??")
+        loop {
+            let bytes_read = self
+                .do_read_write(true, &[], &mut ret_buf)
+                .context("Cannot wait for reply/transaction complete")?;
+            let read = &ret_buf[0..bytes_read];
+
+            if is_first_time {
+                // SAFETY: The packet did succesfully sent out
+                unsafe { packet.objects_sent() };
+                write_buf.clear();
+                is_first_time = false;
+            }
+
+            // SAFETY: Kernel jsut wrote it
+            for ret in unsafe { RetIterator::new(&read) } {
+                match ret {
+                    return_parser::RetVal::Err(e) => {
+                        bail!("Error sending packet (kernel returned BR_ERROR): {e}")
                     }
+                    return_parser::RetVal::Ok => panic!("Not expecting BR_OK"),
+                    return_parser::RetVal::TransactionComplete => {
+                        is_completed = true;
+                    }
+                    return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
+                        self.handle_transaction(transaction);
+                    }
+                    return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
+                        unreachable!("Kernel should not return not kernel managed transactions")
+                    }
+                    return_parser::RetVal::Reply(transaction) => {
+                        assert!(!is_one_way, "Kernel sent reply for one way??");
+                        let code = transaction.get_common().code;
+                        let flags = transaction.get_common().flags;
+                        let kernel = match transaction {
+                            Transaction::KernelManaged(x) => x,
+                            Transaction::NotKernelManaged(_) => {
+                                unreachable!("This has to be from kernel")
+                            }
+                        };
 
-                    reply = Some((code, flags, Packet::from_kernel(self.clone(), kernel)));
+                        if reply.is_some() {
+                            bail!("Kernel sent double reply??")
+                        }
+
+                        reply = Some((code, flags, Packet::from_kernel(self.clone(), kernel)));
+                    }
+                    return_parser::RetVal::DeadReply => bail!("Target died"),
+                    x => self.handle_misc_ret(x),
                 }
-                return_parser::RetVal::DeadReply => bail!("Target died"),
-                x => self.handle_misc_ret(x),
+            }
+
+            if is_completed && reply.is_some() {
+                // Received both the BR_TRANSACTION_COMPLETE and the BR_REPLY
+                break;
+            } else if is_completed && is_one_way {
+                // Only BR_TRANSACTION_COMPLETE is sent for one way transaction
+                break;
             }
         }
 
-        // SAFETY: The packet did succesfully sent out
-        unsafe { packet.objects_sent() };
         if !is_one_way && reply.is_none() {
             bail!("Remote didnt send reply")
+        } else if is_one_way && reply.is_some() {
+            bail!("Remote sent reply for one way transactions")
         }
 
         Ok(reply)
@@ -305,15 +336,39 @@ impl Runtime {
 
         meta.on_transaction(code, flags, &packet, reply_option)
             .expect("Cannot perform transaction");
+
+        if flags.contains(object::Flag::OneWay) {
+            // no need to handle replying
+            return;
+        }
+
+        println!("Sending reply");
+        let mut write_buf = Vec::new();
+        write_buf.extend_from_slice(&Command::SendReply.as_bytes());
+        let transaction = Transaction::NotKernelManaged(TransactionNotKernelMananged {
+            data: TransactionDataCommon {
+                code,
+                data_slice: &packet.get_data(),
+                flags: object::Flag::into_raw(flags),
+                offsets: &packet.get_offsets(),
+                target: ObjectRef::Local(ObjectRefLocal {
+                    data: 0,
+                    extra_data: 0,
+                }),
+            },
+        });
+        transaction.with_bytes(|x| write_buf.extend_from_slice(x));
+        self.do_read_write(true, &write_buf, &mut [])
+            .expect("Cannot send reply");
     }
 
     fn handle_misc_ret(self: &Arc<Runtime>, ret: RetVal<'_>) {
         match ret {
-            return_parser::RetVal::TransactionComplete
-            | return_parser::RetVal::DeadReply
-            | return_parser::RetVal::Ok
-            | return_parser::RetVal::Reply(_)
-            | return_parser::RetVal::Err(_) => panic!("Unexpected"),
+            return_parser::RetVal::TransactionComplete => (),
+            return_parser::RetVal::DeadReply => panic!("Unexpected dead reply"),
+            return_parser::RetVal::Ok => (),
+            return_parser::RetVal::Reply(_) => panic!("Unexpected reply"),
+            return_parser::RetVal::Err(e) => panic!("Unexpected error: {e}"),
             return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
                 unreachable!("Kernel should not return non kernel managed transaction")
             }
@@ -342,7 +397,10 @@ impl Runtime {
                     .get(data)
                     .expect("Cannot find local object");
                 let mut control = meta.control.write().unwrap();
-                assert!(control.has_strong, "kernel sent inconsistent state");
+                assert!(
+                    control.has_strong,
+                    "kernel sent inconsistent state for {data}"
+                );
                 control.has_strong = false;
 
                 if !control.has_weak {
@@ -372,7 +430,10 @@ impl Runtime {
                     .get(data)
                     .expect("Cannot find local object");
                 let mut control = meta.control.write().unwrap();
-                assert!(control.has_weak, "kernel sent inconsistent state");
+                assert!(
+                    control.has_weak,
+                    "kernel sent inconsistent state for {data}"
+                );
                 control.has_weak = false;
 
                 if !control.has_strong {
@@ -395,13 +456,26 @@ impl Runtime {
             self.handle_misc_ret(ret);
         }
     }
-}
 
-fn worker(dev: Arc<OwnedFd>, shutdown_pipe: Arc<Pipe<bool>>, runtime: Weak<Runtime>) {
-    if let Some(x) = runtime.upgrade() {
-        x.do_read_write(true, &Command::EnterLooper.as_bytes(), &mut [])
+    fn exit_looper(&self) {
+        self.do_read_write(false, &Command::ExitLooper.as_bytes(), &mut [])
+            .expect("Cannot exit as looper");
+    }
+
+    fn enter_looper(&self) {
+        self.do_read_write(false, &Command::EnterLooper.as_bytes(), &mut [])
             .expect("Cannot enter as looper");
     }
+}
+
+fn worker(
+    dev: Arc<OwnedFd>,
+    shutdown_pipe: Arc<Pipe<bool>>,
+    init_done: oneshot::Receiver<()>,
+    runtime: Weak<Runtime>,
+) {
+    init_done.recv().unwrap();
+    runtime.upgrade().unwrap().enter_looper();
 
     loop {
         let mut pollfd = [
@@ -428,7 +502,6 @@ fn worker(dev: Arc<OwnedFd>, shutdown_pipe: Arc<Pipe<bool>>, runtime: Weak<Runti
 
     println!("Shutdown triggered, quiting...");
     if let Some(x) = runtime.upgrade() {
-        x.do_read_write(true, &Command::ExitLooper.as_bytes(), &mut [])
-            .expect("Cannot exit as looper");
+        x.exit_looper()
     }
 }

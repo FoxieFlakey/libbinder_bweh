@@ -7,6 +7,7 @@ use crate::{
     Runtime,
     object::{B, ObjectTrait},
     packet::Packet,
+    proxy::Proxy,
 };
 
 pub struct Reader<'a> {
@@ -66,7 +67,11 @@ impl<'a> Reader<'a> {
             ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => {
                 Ok(self.runtime.local_objects.get(data).unwrap().clone())
             }
-            ObjectParsed::RemoteReference(_) => todo!(),
+
+            ObjectParsed::RemoteReference(remote) => Ok(Arc::new(B::new(Proxy {
+                rt: Arc::downgrade(self.runtime),
+                remote_ref: remote,
+            }))),
         }
     }
 }

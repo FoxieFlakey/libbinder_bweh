@@ -15,7 +15,9 @@ use either::Either;
 // make it the only writer
 pub use libbinder_sys::transaction::TransactionFlag;
 use libbinder_sys::{
-    commands::Command, transaction::TransactionKernelManaged, types::ObjectParsed,
+    commands::Command,
+    transaction::TransactionKernelManaged,
+    types::{ObjectParsed, reference::ObjectRefLocal},
     write_read::binder_read_write,
 };
 use nix::errno::Errno;
@@ -116,7 +118,16 @@ impl Packet {
     // references
     pub(crate) unsafe fn objects_sent(&self) {
         for_each_object(self.get_data(), self.get_offsets(), |object| match object {
-            ObjectParsed::LocalReference(_) => {}
+            ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => {
+                self.runtime
+                    .local_objects
+                    .get(data)
+                    .expect("Cannot find object")
+                    .control
+                    .write()
+                    .unwrap()
+                    .has_strong = true;
+            }
             ObjectParsed::RemoteReference(_) => (),
         });
     }
