@@ -6,12 +6,7 @@
 mod reader;
 mod writer;
 
-use std::{
-    mem::{self, ManuallyDrop},
-    os::fd::AsFd,
-    ptr,
-    sync::Arc,
-};
+use std::{mem::ManuallyDrop, os::fd::AsFd, ptr, sync::Arc};
 
 use anyhow::anyhow;
 use either::Either;
@@ -26,7 +21,7 @@ use libbinder_sys::{
 use nix::errno::Errno;
 pub use writer::Writer;
 
-use crate::{Runtime, object::ObjectTrait, packet::reader::Reader};
+use crate::{Runtime, packet::reader::Reader};
 
 struct Owned {
     data: Vec<u8>,
@@ -121,14 +116,7 @@ impl Packet {
     // references
     pub(crate) unsafe fn objects_sent(&self) {
         for_each_object(self.get_data(), self.get_offsets(), |object| match object {
-            ObjectParsed::LocalReference(x) => {
-                // SAFETY: Trust da kernel
-                let reference = unsafe {
-                    Arc::from_raw(ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(x.data))
-                };
-                mem::forget(reference.clone());
-                mem::forget(reference);
-            }
+            ObjectParsed::LocalReference(_) => {}
             ObjectParsed::RemoteReference(_) => (),
         });
     }
@@ -144,11 +132,10 @@ where
     }
 }
 
-fn drop_objects(_runtime: &Runtime, data: &[u8], offsets: &[usize]) {
+fn drop_objects(runtime: &Arc<Runtime>, data: &[u8], offsets: &[usize]) {
     for_each_object(data, offsets, |object| match object {
         ObjectParsed::LocalReference(x) => {
-            // SAFETY: Trust da kernel
-            unsafe { Arc::from_raw(ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(x.data)) };
+            runtime.handle_misc_ret(crate::return_parser::RetVal::ReleaseStrong(x));
         }
         ObjectParsed::RemoteReference(_) => (),
     });

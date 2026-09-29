@@ -1,9 +1,7 @@
 use std::{
-    mem,
     os::fd::{AsFd, OwnedFd},
     path::Path,
-    ptr,
-    sync::{Arc, OnceLock, Weak},
+    sync::{Arc, OnceLock, RwLock, Weak},
     thread::{self, JoinHandle},
 };
 
@@ -24,6 +22,7 @@ use nix::{
     poll::{PollFd, PollFlags, PollTimeout, poll},
     sys::stat::Mode,
 };
+use sharded_slab::Slab;
 
 use crate::{
     mmap::Mmap,
@@ -48,8 +47,19 @@ pub struct Runtime {
     binder_dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
     join_handle: JoinHandle<()>,
-    manager: OnceLock<Arc<Box<dyn ObjectTrait>>>,
+    manager: OnceLock<Arc<dyn ObjectTrait>>,
+    local_objects: Slab<ObjectMetadata>,
     _mmap: Mmap,
+}
+
+struct ObjectMetadata {
+    inner: Arc<dyn ObjectTrait>,
+    control: RwLock<Refs>,
+}
+
+struct Refs {
+    has_strong: bool,
+    has_weak: bool,
 }
 
 impl Drop for Runtime {
@@ -69,8 +79,8 @@ const SERVICE_MANAGER: ObjectRefRemote = ObjectRefRemote {
 pub const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 pub enum ContextManagerInfo {
-    Concrete(Arc<Box<dyn ObjectTrait>>),
-    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<Box<dyn ObjectTrait>>>>),
+    Concrete(Arc<dyn ObjectTrait>),
+    Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<dyn ObjectTrait>>>),
 }
 
 impl Runtime {
@@ -99,35 +109,43 @@ impl Runtime {
                 shutdown_pipe: shutdown_pipe.clone(),
                 manager: OnceLock::new(),
                 join_handle: thread::spawn(move || worker(dev, shutdown_pipe, weak.clone())),
+                local_objects: Slab::new(),
             }
         });
 
-        rt.manager
-            .set(match context_manager {
-                ContextManagerInfo::Concrete(manager) => {
-                    // We become client, here would be do some calls to binder
-                    // to say we're the manager and also remember the concrete
-                    libbinder_sys::binder_set_context_mgr(
-                        dev.as_fd(),
-                        &ObjectRefLocal {
-                            data: 0,
-                            extra_data: 0,
-                        },
-                    )
-                    .context("Cannot become context manager")?;
-                    manager
-                }
-                ContextManagerInfo::Remote(builder) => {
-                    // We become client, here would be creating local
-                    // service manager proxy
-                    builder(Proxy {
-                        rt: Arc::downgrade(&rt),
-                        remote_ref: SERVICE_MANAGER,
-                    })?
-                }
-            })
-            .ok()
-            .unwrap();
+        let mgr = match context_manager {
+            ContextManagerInfo::Concrete(manager) => {
+                // We become client, here would be do some calls to binder
+                // to say we're the manager and also remember the concrete
+                libbinder_sys::binder_set_context_mgr(
+                    dev.as_fd(),
+                    &ObjectRefLocal {
+                        data: rt
+                            .local_objects
+                            .insert(ObjectMetadata {
+                                inner: manager.clone(),
+                                control: RwLock::new(Refs {
+                                    has_strong: true,
+                                    has_weak: false,
+                                }),
+                            })
+                            .unwrap(),
+                        extra_data: 0,
+                    },
+                )
+                .context("Cannot become context manager")?;
+                manager
+            }
+            ContextManagerInfo::Remote(builder) => {
+                // We become client, here would be creating local
+                // service manager proxy
+                builder(Proxy {
+                    rt: Arc::downgrade(&rt),
+                    remote_ref: SERVICE_MANAGER,
+                })?
+            }
+        };
+        rt.manager.set(mgr).ok().unwrap();
         Ok(rt)
     }
 
@@ -171,7 +189,7 @@ impl Runtime {
         }
     }
 
-    pub fn get_manager(&self) -> &Arc<Box<dyn ObjectTrait>> {
+    pub fn get_manager(&self) -> &Arc<dyn ObjectTrait> {
         self.manager.get().expect("Manager is not initialized")
     }
 
@@ -254,7 +272,7 @@ impl Runtime {
     // handle transaction that comes
     fn handle_transaction(self: &Arc<Runtime>, transaction: TransactionKernelManaged) {
         let target = match transaction.get_data().target {
-            ObjectRef::Local(x) => x,
+            ObjectRef::Local(x) => x.data,
             ObjectRef::Remote(_) => {
                 panic!("Should not receive reference to remote object")
             }
@@ -273,14 +291,15 @@ impl Runtime {
             Some((&mut reply_code, &mut reply_flags, &mut reply))
         };
 
-        if target.data == 0 && target.extra_data == 0 {
-            // Special meaning that this is service manager
-            self.get_manager()
-                .on_transaction(code, flags, &packet, reply_option)
-                .expect("Cannot perform transaction");
-        } else {
-            todo!("handle non manager transaction")
+        let meta = self.local_objects.get(target).unwrap();
+        let control = meta.control.read().unwrap();
+        if !control.has_strong && !control.has_weak {
+            panic!("Attempting to handle transaction on object that was already removed")
         }
+
+        meta.inner
+            .on_transaction(code, flags, &packet, reply_option)
+            .expect("Cannot perform transaction");
     }
 
     fn handle_misc_ret(self: &Arc<Runtime>, ret: RetVal<'_>) {
@@ -299,35 +318,52 @@ impl Runtime {
             return_parser::RetVal::DeadBinder(_) => (),
             return_parser::RetVal::SpawnLooper => (),
             return_parser::RetVal::AcquireStrong(ObjectRefLocal { data, .. }) => {
-                // SAFETY: Trust da kernel
-                unsafe {
-                    Arc::increment_strong_count(
-                        ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(data),
-                    )
-                };
+                let meta = self
+                    .local_objects
+                    .get(data)
+                    .expect("Cannot find local object");
+                meta.control.write().unwrap().has_strong = true;
             }
             return_parser::RetVal::ReleaseStrong(ObjectRefLocal { data, .. }) => {
-                // SAFETY: Trust da kernel
-                unsafe {
-                    Arc::decrement_strong_count(
-                        ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(data),
-                    )
-                };
+                let meta = self
+                    .local_objects
+                    .get(data)
+                    .expect("Cannot find local object");
+                let mut control = meta.control.write().unwrap();
+                assert!(control.has_strong, "kernel sent inconsistent state");
+                control.has_strong = false;
+
+                if !control.has_weak {
+                    drop(control);
+                    drop(meta);
+                    self.local_objects
+                        .take(data)
+                        .expect("Cannot remove local object");
+                }
             }
             return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
-                // SAFETY: Trust da kernel
-                let weak = unsafe {
-                    Weak::from_raw(ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(data))
-                };
-
-                mem::forget(weak.clone());
-                mem::forget(weak);
+                let meta = self
+                    .local_objects
+                    .get(data)
+                    .expect("Cannot find local object");
+                meta.control.write().unwrap().has_weak = true;
             }
             return_parser::RetVal::ReleaseWeak(ObjectRefLocal { data, .. }) => {
-                // SAFETY: Trust da kernel and then decrement by dropping it
-                unsafe {
-                    Weak::from_raw(ptr::with_exposed_provenance::<Box<dyn ObjectTrait>>(data))
-                };
+                let meta = self
+                    .local_objects
+                    .get(data)
+                    .expect("Cannot find local object");
+                let mut control = meta.control.write().unwrap();
+                assert!(control.has_weak, "kernel sent inconsistent state");
+                control.has_weak = false;
+
+                if !control.has_strong {
+                    drop(control);
+                    drop(meta);
+                    self.local_objects
+                        .take(data)
+                        .expect("Cannot remove local object");
+                }
             }
         }
     }

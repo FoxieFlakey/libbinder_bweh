@@ -1,10 +1,13 @@
-use std::{mem, sync::Arc};
+use std::{
+    mem,
+    sync::{Arc, RwLock},
+};
 
 use either::Either;
 use libbinder_sys::types::reference::{ObjectRef, ObjectRefLocal};
 
 use crate::{
-    Runtime,
+    ObjectMetadata, Refs, Runtime,
     object::ObjectTrait,
     packet::{Owned, Packet},
 };
@@ -82,7 +85,7 @@ impl Writer {
         self.data.extend_from_slice(bytes.as_ref());
     }
 
-    pub fn write_reference(&mut self, reference: Arc<Box<dyn ObjectTrait>>) {
+    pub fn write_reference(&mut self, reference: Arc<dyn ObjectTrait>) {
         assert!(
             self.data.len().is_multiple_of(4),
             "Binder objects must be at offset of multiple of four"
@@ -90,7 +93,17 @@ impl Writer {
 
         self.offsets.push(self.data.len());
         let reference_raw = ObjectRef::Local(ObjectRefLocal {
-            data: Arc::into_raw(reference).addr(),
+            data: self
+                .runtime
+                .local_objects
+                .insert(ObjectMetadata {
+                    inner: reference,
+                    control: RwLock::new(Refs {
+                        has_strong: false,
+                        has_weak: false,
+                    }),
+                })
+                .unwrap(),
             extra_data: 0,
         });
         reference_raw.with_raw_bytes(|bytes| self.data.extend_from_slice(bytes));
