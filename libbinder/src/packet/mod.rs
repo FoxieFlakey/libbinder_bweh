@@ -23,7 +23,7 @@ use libbinder_sys::{
     write_read::binder_read_write,
 };
 use nix::errno::Errno;
-pub use passthru::RawFormat as Writer;
+pub use passthru::Writer;
 
 use crate::object::Object;
 

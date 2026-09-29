@@ -4,23 +4,18 @@ use libbinder_sys::types::reference::{ObjectRef, ObjectRefLocal};
 
 use crate::{object::Object, packet::Packet};
 
-// A very simple format, passing data as it is
-// it is unportable because usize and platform
-// dependant type gets encoded too.
-//
-// TODO: Turn this into trait
-pub struct RawFormat {
+pub struct Writer {
     pub(super) data: Vec<u8>,
     pub(super) offsets: Vec<usize>,
 }
 
-impl Drop for RawFormat {
+impl Drop for Writer {
     fn drop(&mut self) {
         super::drop_objects(&self.data, &self.offsets);
     }
 }
 
-impl RawFormat {
+impl Writer {
     pub fn new() -> Self {
         Self {
             data: Vec::new(),
@@ -48,24 +43,11 @@ impl RawFormat {
         self.offsets.clear();
     }
 
-    pub fn write_u8(&mut self, data: u8) {
-        self.data.extend_from_slice(&data.to_ne_bytes());
-    }
-
-    pub fn write_u16(&mut self, data: u16) {
-        self.data.extend_from_slice(&data.to_ne_bytes());
-    }
-
-    pub fn write_u32(&mut self, data: u32) {
-        self.data.extend_from_slice(&data.to_ne_bytes());
-    }
-
-    pub fn write_u64(&mut self, data: u64) {
-        self.data.extend_from_slice(&data.to_ne_bytes());
-    }
-
-    pub fn write_usize(&mut self, data: usize) {
-        self.data.extend_from_slice(&data.to_ne_bytes());
+    pub fn write_bytes<T>(&mut self, bytes: T)
+    where
+        T: AsRef<[u8]>,
+    {
+        self.data.extend_from_slice(bytes.as_ref());
     }
 
     pub fn write_reference(&mut self, reference: Arc<Box<dyn Object>>) {

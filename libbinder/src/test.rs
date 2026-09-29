@@ -55,8 +55,8 @@ pub fn lib_main() {
             let packet = {
                 let mut w = packet::Writer::new();
                 w.write_reference(Arc::new(Box::new(Concrete("app".to_string()))));
-                w.write_u8(0x29);
-                w.write_u64(0x38);
+                w.write_bytes(0x29u8.to_ne_bytes());
+                w.write_bytes(0x38u32.to_ne_bytes());
                 w.finish()
             };
 
