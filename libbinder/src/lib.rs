@@ -328,6 +328,13 @@ impl Runtime {
                     .get(data)
                     .expect("Cannot find local object");
                 meta.control.write().unwrap().has_strong = true;
+
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&Command::AcquireDone.as_bytes());
+                buf.extend_from_slice(&data.to_ne_bytes());
+                buf.extend_from_slice(&(0usize).to_ne_bytes());
+                self.do_read_write(false, &buf, &mut [])
+                    .expect("Cannot send BC_ACQUIRE_DONE");
             }
             return_parser::RetVal::ReleaseStrong(ObjectRefLocal { data, .. }) => {
                 let meta = self
@@ -352,6 +359,12 @@ impl Runtime {
                     .get(data)
                     .expect("Cannot find local object");
                 meta.control.write().unwrap().has_weak = true;
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&Command::AcquireWeakDone.as_bytes());
+                buf.extend_from_slice(&data.to_ne_bytes());
+                buf.extend_from_slice(&(0usize).to_ne_bytes());
+                self.do_read_write(false, &buf, &mut [])
+                    .expect("Cannot send BC_INCREFS_DONE");
             }
             return_parser::RetVal::ReleaseWeak(ObjectRefLocal { data, .. }) => {
                 let meta = self
