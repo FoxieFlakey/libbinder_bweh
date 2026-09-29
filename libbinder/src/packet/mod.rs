@@ -3,7 +3,7 @@
 // handle to keep track offset of each types. Binder's
 // transaction need to know where those are
 
-mod passthru;
+mod writer;
 
 use std::{
     mem::{self, ManuallyDrop},
@@ -23,7 +23,7 @@ use libbinder_sys::{
     write_read::binder_read_write,
 };
 use nix::errno::Errno;
-pub use passthru::Writer;
+pub use writer::Writer;
 
 use crate::object::Object;
 
@@ -54,18 +54,6 @@ impl Drop for Packet {
             }
 
             Either::Left(owned) => drop_objects(&owned.data, &owned.offsets),
-        }
-    }
-}
-
-impl Writer {
-    pub fn finish(mut self) -> Packet {
-        Packet {
-            binder_dev: None,
-            inner: Either::Left(Owned {
-                data: mem::take(&mut self.data),
-                offsets: mem::take(&mut self.offsets),
-            }),
         }
     }
 }
@@ -108,19 +96,14 @@ impl Packet {
         }
     }
 
-    pub fn into_writer(self) -> Writer {
+    pub fn writer(self) -> Writer {
         let packet = ManuallyDrop::new(self.into_owned());
         // SAFETY: Just wanted to move 'inner' out without trigger drop code
         // the binder_dev must be None here, so no drop code need to run and drop code
         // for inner, is moved here to be dropped later
-        let mut owned = unsafe { ptr::read(&packet.inner) }.left().unwrap();
+        let owned = unsafe { ptr::read(&packet.inner) }.left().unwrap();
 
-        owned.data.clear();
-        owned.offsets.clear();
-        Writer {
-            data: owned.data,
-            offsets: owned.offsets,
-        }
+        Writer::from_existing(owned.data, owned.offsets)
     }
 
     // Appropriately does needed strong count increments

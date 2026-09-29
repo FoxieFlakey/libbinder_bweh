@@ -22,7 +22,7 @@ pub enum RetVal<'buf> {
     Transaction(Transaction<'buf, 'buf>),
     TransactionComplete,
     Reply(Transaction<'buf, 'buf>),
-    DeadBinder(usize),
+    DeadBinder(#[expect(unused)] usize),
     DeadReply,
     SpawnLooper,
     AcquireStrong(ObjectRefLocal),

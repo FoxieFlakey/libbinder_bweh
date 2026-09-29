@@ -1,12 +1,16 @@
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
+use either::Either;
 use libbinder_sys::types::reference::{ObjectRef, ObjectRefLocal};
 
-use crate::{object::Object, packet::Packet};
+use crate::{
+    object::Object,
+    packet::{Owned, Packet},
+};
 
 pub struct Writer {
-    pub(super) data: Vec<u8>,
-    pub(super) offsets: Vec<usize>,
+    data: Vec<u8>,
+    offsets: Vec<usize>,
 }
 
 impl Drop for Writer {
@@ -21,6 +25,10 @@ impl Writer {
             data: Vec::new(),
             offsets: Vec::new(),
         }
+    }
+
+    pub(super) fn from_existing(data: Vec<u8>, offsets: Vec<usize>) -> Self {
+        Self { data, offsets }
     }
 
     pub fn copy_from(&mut self, other: &Packet) {
@@ -41,6 +49,16 @@ impl Writer {
     pub fn clear(&mut self) {
         self.data.clear();
         self.offsets.clear();
+    }
+
+    pub fn finish(mut self) -> Packet {
+        Packet {
+            binder_dev: None,
+            inner: Either::Left(Owned {
+                data: mem::take(&mut self.data),
+                offsets: mem::take(&mut self.offsets),
+            }),
+        }
     }
 
     pub fn write_bytes<T>(&mut self, bytes: T)
