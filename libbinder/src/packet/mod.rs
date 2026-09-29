@@ -3,6 +3,7 @@
 // handle to keep track offset of each types. Binder's
 // transaction need to know where those are
 
+mod reader;
 mod writer;
 
 use std::{
@@ -25,7 +26,7 @@ use libbinder_sys::{
 use nix::errno::Errno;
 pub use writer::Writer;
 
-use crate::object::Object;
+use crate::{object::Object, packet::reader::Reader};
 
 struct Owned {
     data: Vec<u8>,
@@ -73,6 +74,10 @@ impl Packet {
                 offsets: new_offsets,
             }),
         }
+    }
+
+    pub fn reader<'a>(&'a self) -> Reader<'a> {
+        Reader::new(self)
     }
 
     pub(crate) fn from_kernel(binder_dev: Arc<OwnedFd>, kernel: TransactionKernelManaged) -> Self {
