@@ -103,11 +103,17 @@ impl Packet {
         // for inner, is moved here to be dropped later
         let owned = unsafe { ptr::read(&packet.inner) }.left().unwrap();
 
-        Writer::from_existing(owned.data, owned.offsets)
+        // SAFETY: We just make exclusive ownership of binder objects
+        unsafe { Writer::from_existing(owned.data, owned.offsets) }
     }
 
     // Appropriately does needed strong count increments
-    pub(crate) fn objects_sent(&self) {
+    // # Safety
+    // caller must call this only once, for each time
+    // this packeet is sent. This directly will increment
+    // necessary strong counters on each objects like local
+    // references
+    pub(crate) unsafe fn objects_sent(&self) {
         for_each_object(self.get_data(), self.get_offsets(), |object| match object {
             ObjectParsed::LocalReference(x) => {
                 // SAFETY: Trust da kernel

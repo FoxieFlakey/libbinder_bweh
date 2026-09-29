@@ -27,7 +27,10 @@ impl Writer {
         }
     }
 
-    pub(super) fn from_existing(data: Vec<u8>, offsets: Vec<usize>) -> Self {
+    // # Safety
+    // By doing this you are transfering ownership of all binder objects
+    // to the writer
+    pub(super) unsafe fn from_existing(data: Vec<u8>, offsets: Vec<usize>) -> Self {
         Self { data, offsets }
     }
 

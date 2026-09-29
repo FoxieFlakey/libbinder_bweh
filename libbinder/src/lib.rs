@@ -246,8 +246,8 @@ impl Runtime {
             }
         }
 
-        // The objects are succesfully sent by kernel
-        packet.objects_sent();
+        // SAFETY: The packet did succesfully sent out
+        unsafe { packet.objects_sent() };
         if !is_one_way && reply.is_none() {
             bail!("Remote didnt send reply")
         }
