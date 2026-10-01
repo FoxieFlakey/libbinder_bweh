@@ -13,6 +13,8 @@ use libbinder_sys::transaction::TransactionFlag;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Flag {
     OneWay,
+    // Clears all data associated with this parcel on the receiving
+    ClearBufs,
 }
 
 impl Flag {
@@ -21,6 +23,10 @@ impl Flag {
         if raw.contains(Flag::OneWay) {
             ret |= TransactionFlag::OneWay;
         }
+
+        if raw.contains(Flag::ClearBufs) {
+            ret |= TransactionFlag::ClearBuffer;
+        }
         ret
     }
 
@@ -28,6 +34,10 @@ impl Flag {
         let mut ret = Default::default();
         if raw.contains(TransactionFlag::OneWay) {
             ret |= Flag::OneWay;
+        }
+
+        if raw.contains(TransactionFlag::ClearBuffer) {
+            ret |= Flag::ClearBufs;
         }
         ret
     }
