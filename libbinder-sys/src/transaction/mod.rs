@@ -112,6 +112,14 @@ pub(crate) struct TransactionDataRaw {
     data: DataUnion,
 }
 
+// Equivalent to struct binder_transaction_data_sg
+#[derive(Clone, Copy, Zeroable, Pod)]
+#[repr(C)]
+pub(crate) struct TransactionDataSgRaw {
+    transaction_data: TransactionDataRaw,
+    buffers_size: BinderUsize,
+}
+
 // Equivalent to struct binder_transaction_data_secctx
 #[derive(Clone, Copy, Zeroable, Pod)]
 #[repr(C)]

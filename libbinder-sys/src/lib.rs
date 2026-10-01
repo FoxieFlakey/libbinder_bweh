@@ -62,6 +62,16 @@ mod ioctl {
 
 pub const BINDER_COMPILED_VERSION: Version = Version { version: 8 };
 
+// This belongs nowhere
+// Mirrors the binder_frozen_state_info
+#[derive(Clone, Copy, Zeroable, Pod)]
+#[repr(C)]
+pub struct BinderFrozenStateInfo {
+    pub cookie: BinderUsize,
+    pub is_frozen: u32,
+    pub reserved: u32,
+}
+
 pub fn binder_set_context_mgr(
     fd: BorrowedFd,
     manager_object: &ObjectRefLocal,

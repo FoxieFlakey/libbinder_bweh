@@ -176,6 +176,11 @@ impl<'buf> Iterator for RetIterator<'buf> {
                 );
                 RetVal::ReleaseWeak(ObjectRefLocal { data, extra_data })
             }
+            libbinder_sys::commands::ReturnVal::ClearDeathNotificationDone => todo!(),
+            libbinder_sys::commands::ReturnVal::FrozenReply => todo!(),
+            libbinder_sys::commands::ReturnVal::OneWaySpamSuspect => todo!(),
+            libbinder_sys::commands::ReturnVal::TransactionPendingFrozen => todo!(),
+            libbinder_sys::commands::ReturnVal::FrozenBinder => todo!(),
         });
 
         self.buf = &self.buf[advance_bytes + 4..];

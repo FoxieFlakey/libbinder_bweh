@@ -6,7 +6,7 @@ use num_enum::{TryFromPrimitive, TryFromPrimitiveError};
 
 use crate::{
     BinderUsize,
-    transaction::{TransactionDataRaw, TransactionDataSecctxRaw},
+    transaction::{TransactionDataRaw, TransactionDataSecctxRaw, TransactionDataSgRaw},
 };
 
 const BINDER_CMD_MAGIC: u8 = b'c';
@@ -26,6 +26,21 @@ pub enum Command {
     RegisterLooper = request_code_none!(BINDER_CMD_MAGIC, 11),
     EnterLooper = request_code_none!(BINDER_CMD_MAGIC, 12),
     ExitLooper = request_code_none!(BINDER_CMD_MAGIC, 13),
+
+    // death notification
+    RequestDeathNotification = request_code_write!(BINDER_RET_MAGIC, 14, size_of::<PtrCookieRaw>()),
+    ClearDeathNotification = request_code_write!(BINDER_RET_MAGIC, 15, size_of::<PtrCookieRaw>()),
+    DeathNotificationDone = request_code_write!(BINDER_RET_MAGIC, 16, size_of::<PtrCookieRaw>()),
+
+    SendTransactionSG =
+        request_code_write!(BINDER_RET_MAGIC, 17, size_of::<TransactionDataSgRaw>()),
+    SendReplySG = request_code_write!(BINDER_RET_MAGIC, 18, size_of::<TransactionDataSgRaw>()),
+
+    // Freeze notification
+    RequestFreezeNotification =
+        request_code_write!(BINDER_RET_MAGIC, 19, size_of::<PtrCookieRaw>()),
+    ClearFreezeNotification = request_code_write!(BINDER_RET_MAGIC, 20, size_of::<PtrCookieRaw>()),
+    FreezeNotificationDone = request_code_write!(BINDER_RET_MAGIC, 21, size_of::<PtrCookieRaw>()),
 }
 
 impl Command {
@@ -66,12 +81,21 @@ pub enum ReturnVal {
     TransactionComplete = request_code_none!(BINDER_RET_MAGIC, 6),
     Noop = request_code_none!(BINDER_RET_MAGIC, 12),
     SpawnLooper = request_code_none!(BINDER_RET_MAGIC, 13),
-    DeadBinder = request_code_none!(BINDER_RET_MAGIC, 15),
+    DeadBinder = request_code_read!(BINDER_RET_MAGIC, 15, size_of::<BinderUsize>()),
     Failed = request_code_none!(BINDER_RET_MAGIC, 17),
     Acquire = request_code_read!(BINDER_RET_MAGIC, 8, size_of::<PtrCookieRaw>()),
     AcquireWeak = request_code_read!(BINDER_RET_MAGIC, 7, size_of::<PtrCookieRaw>()),
     Release = request_code_read!(BINDER_RET_MAGIC, 9, size_of::<PtrCookieRaw>()),
     ReleaseWeak = request_code_read!(BINDER_RET_MAGIC, 10, size_of::<PtrCookieRaw>()),
+    ClearDeathNotificationDone = request_code_read!(BINDER_RET_MAGIC, 16, size_of::<BinderUsize>()),
+    FrozenReply = request_code_none!(BINDER_RET_MAGIC, 18),
+    OneWaySpamSuspect = request_code_none!(BINDER_RET_MAGIC, 19),
+    TransactionPendingFrozen = request_code_none!(BINDER_RET_MAGIC, 20),
+    FrozenBinder = request_code_read!(
+        BINDER_RET_MAGIC,
+        21,
+        size_of::<crate::BinderFrozenStateInfo>()
+    ),
 }
 
 impl ReturnVal {
