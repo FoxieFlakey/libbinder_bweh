@@ -41,9 +41,6 @@ pub mod packet;
 mod pipe;
 mod proxy;
 mod return_parser;
-mod test;
-
-pub use test::lib_main;
 
 pub struct Runtime {
     binder_dev: Arc<OwnedFd>,
@@ -68,12 +65,12 @@ impl Drop for Runtime {
     }
 }
 
-pub const READ_BUF_SIZE: usize = 256;
+const READ_BUF_SIZE: usize = 256;
 const SERVICE_MANAGER: ObjectRefRemote = ObjectRefRemote {
     data_handle: 0,
     extra_local_data: 0,
 };
-pub const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
+const BINDER_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
 pub enum ContextManagerInfo {
     Concrete(Box<dyn FnOnce(&Arc<Runtime>) -> anyhow::Result<Arc<B<dyn ObjectTrait>>>>),
