@@ -1,4 +1,4 @@
-use std::slice;
+use std::{ffi::CStr, ptr, slice};
 
 use bytemuck_utils::PodData;
 use enumflags2::BitFlags;
@@ -8,6 +8,7 @@ use crate::{
     object::reference::{ObjectRef, ObjectRefRemote},
     transaction::{
         BinderOrHandleUnion, BufferStruct, DataUnion, TransactionDataCommon, TransactionDataRaw,
+        TransactionDataSecctxRaw,
     },
 };
 
@@ -90,6 +91,10 @@ impl TransactionKernelManaged {
         size_of::<TransactionDataRaw>()
     }
 
+    pub fn bytes_needed_for_secctx() -> usize {
+        size_of::<TransactionDataSecctxRaw>()
+    }
+
     // SAFETY: The 'bytes' has to be from kernel from the correct binder_dev
     // and the bytes assumed to be from BR_TRANSACTION/BR_REPLY
     //
@@ -127,7 +132,27 @@ impl TransactionKernelManaged {
                 flags: BitFlags::from_bits(raw.flags).ok().unwrap(),
                 data_slice,
                 offsets,
+                secctx: None,
+                sender_euid: raw.sender_uid,
+                sender_pid: raw.sender_pid,
             },
         }
+    }
+
+    // SAFETY: The 'bytes' has to be from kernel from the correct binder_dev
+    // and the bytes assumed to be from BR_TRANSACTION_SEC_CTX
+    //
+    // The 'bytes' alignment can be unaligned, and its fine
+    pub unsafe fn from_bytes_from_secctx(bytes: &[u8]) -> Self {
+        // SAFETY: Caller make sure its safe
+        let mut raw_underlying = unsafe { Self::from_bytes(bytes, false) };
+        let raw = PodData::<TransactionDataSecctxRaw>::try_from_bytes(bytes)
+            .expect("Cannot convert bytes to transaction security ctx data raw");
+
+        // SAFETY: Binder guarantee that this is valid security context string
+        raw_underlying.data.secctx =
+            Some(unsafe { CStr::from_ptr(ptr::with_exposed_provenance(raw.secctx)) });
+
+        raw_underlying
     }
 }

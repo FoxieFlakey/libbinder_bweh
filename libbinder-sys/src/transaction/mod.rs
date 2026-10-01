@@ -1,3 +1,5 @@
+use std::ffi::CStr;
+
 use bytemuck::{Pod, Zeroable};
 use enumflags2::{BitFlags, bitflags};
 
@@ -48,6 +50,13 @@ pub struct TransactionDataCommon<'buf, 'buf_offsets> {
     pub code: u32,
     pub data_slice: &'buf [u8],
     pub offsets: &'buf_offsets [BinderUsize],
+    // Security context of the sender, if its received from
+    // BC_TRANSACTION, or None, outside other cases
+    pub secctx: Option<&'buf CStr>,
+    // NOTE: When sending transaction, kernel ignore these
+    // and overwrites when receiving
+    pub sender_euid: u32,
+    pub sender_pid: i32,
 }
 
 #[bitflags]

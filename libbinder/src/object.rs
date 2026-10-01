@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    ffi::CString,
     ops::Deref,
     sync::{RwLock, Weak},
 };
@@ -72,6 +73,9 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
         code: u32,
         flags: enumflags2::BitFlags<Flag>,
         message: &mut Packet,
+        // If None it means local transaction (a.k.a
+        // direct call)
+        caller_identity: Option<CallerIdentity>,
     ) -> anyhow::Result<Option<(u32, Packet)>>;
 }
 
@@ -79,6 +83,12 @@ pub struct B<T: ObjectTrait + ?Sized> {
     pub(crate) control: RwLock<Refs>,
     pub(crate) flags: ObjectFlags,
     inner: T,
+}
+
+pub struct CallerIdentity {
+    pub sender_euid: u32,
+    pub sender_pid: i32,
+    pub sender_security_ctx: Option<CString>,
 }
 
 impl<T: ObjectTrait> B<T> {

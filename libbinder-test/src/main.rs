@@ -9,7 +9,7 @@ use enumflags2::BitFlags;
 
 use libbinder::{
     ContextManagerInfo, Runtime,
-    object::{self, B, ObjectTrait},
+    object::{self, B, CallerIdentity, ObjectFlags, ObjectTrait},
     packet::{self, Packet},
 };
 
@@ -21,8 +21,26 @@ impl ObjectTrait for Concrete {
         code: u32,
         _flags: enumflags2::BitFlags<object::Flag>,
         message: &mut Packet,
+        caller_identity: Option<CallerIdentity>,
     ) -> anyhow::Result<Option<(u32, Packet)>> {
-        println!("Handled code in {}: {code}", self.1);
+        println!(
+            "Handled code in {}: {code} from PID {} and EUID {}, security context {}",
+            self.1,
+            caller_identity
+                .as_ref()
+                .map(|x| format!("{}", x.sender_pid))
+                .unwrap_or("unknown".to_string()),
+            caller_identity
+                .as_ref()
+                .map(|x| format!("{}", x.sender_euid))
+                .unwrap_or("unknown".to_string()),
+            caller_identity
+                .as_ref()
+                .map(|x| x.sender_security_ctx.as_ref())
+                .flatten()
+                .map(|x| format!("{}", x.to_string_lossy()))
+                .unwrap_or("unknown".to_string())
+        );
 
         if code == 2929 {
             println!("Special code received 2929 calling back to specific one :333");
@@ -38,7 +56,7 @@ impl ObjectTrait for Concrete {
                 w.finish()
             };
 
-            obj.on_transaction(1111, BitFlags::default(), &mut packet)
+            obj.on_transaction(1111, BitFlags::default(), &mut packet, None)
                 .unwrap();
         }
 
@@ -65,10 +83,13 @@ pub fn main() {
                 Runtime::new(
                     "/dev/binder",
                     ContextManagerInfo::Concrete(Box::new(|rt| {
-                        Ok(Arc::new(B::new(Concrete(
-                            Arc::downgrade(rt),
-                            "context manager".to_string(),
-                        ))))
+                        Ok(Arc::new(B::new_with_flags(
+                            Concrete(Arc::downgrade(rt), "context manager".to_string()),
+                            ObjectFlags {
+                                want_transaction_security_context: true,
+                                ..Default::default()
+                            },
+                        )))
                     })),
                 )
                 .unwrap(),
@@ -96,7 +117,7 @@ pub fn main() {
             };
 
             rt.get_manager()
-                .on_transaction(2929, BitFlags::default(), &mut packet)
+                .on_transaction(2929, BitFlags::default(), &mut packet, None)
                 .unwrap();
             thread::sleep(Duration::from_secs(1));
         }

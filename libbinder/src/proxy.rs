@@ -4,7 +4,10 @@ use std::sync::{Arc, Weak};
 
 use libbinder_sys::types::reference::{ObjectRef, ObjectRefRemote};
 
-use crate::{Runtime, object::ObjectTrait};
+use crate::{
+    Runtime,
+    object::{CallerIdentity, ObjectTrait},
+};
 
 pub struct Proxy {
     pub(crate) rt: Weak<Runtime>,
@@ -17,7 +20,14 @@ impl ObjectTrait for Proxy {
         code: u32,
         flags: enumflags2::BitFlags<crate::object::Flag>,
         message: &mut crate::packet::Packet,
+        // When sending out this is ignored
+        caller_identity: Option<CallerIdentity>,
     ) -> anyhow::Result<Option<(u32, crate::packet::Packet)>> {
+        assert!(
+            caller_identity.is_none(),
+            "Sending out to remote do not support setting caller identity"
+        );
+
         let rt: Arc<Runtime> = self
             .rt
             .upgrade()

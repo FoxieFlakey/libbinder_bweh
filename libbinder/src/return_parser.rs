@@ -19,6 +19,7 @@ impl<'buf> RetIterator<'buf> {
 pub enum RetVal<'buf> {
     Err(i32),
     Ok,
+    FailedTransaction,
     Transaction(Transaction<'buf, 'buf>),
     TransactionComplete,
     Reply(Transaction<'buf, 'buf>),
@@ -56,6 +57,10 @@ impl<'buf> Iterator for RetIterator<'buf> {
                 advance_bytes = 0;
                 RetVal::Ok
             }
+            libbinder_sys::commands::ReturnVal::Failed => {
+                advance_bytes = 0;
+                RetVal::FailedTransaction
+            }
             libbinder_sys::commands::ReturnVal::Transaction => {
                 // SAFETY: By having RetIterator instance, caller must make sure that 'buf' is valid
                 // buffer coming from kernel
@@ -64,6 +69,16 @@ impl<'buf> Iterator for RetIterator<'buf> {
                     TransactionKernelManaged::from_bytes(
                         &payload[..TransactionKernelManaged::bytes_needed()],
                         false,
+                    )
+                }))
+            }
+            libbinder_sys::commands::ReturnVal::TransactionSecctx => {
+                // SAFETY: By having RetIterator instance, caller must make sure that 'buf' is valid
+                // buffer coming from kernel
+                advance_bytes = TransactionKernelManaged::bytes_needed_for_secctx();
+                RetVal::Transaction(Transaction::KernelManaged(unsafe {
+                    TransactionKernelManaged::from_bytes_from_secctx(
+                        &payload[..TransactionKernelManaged::bytes_needed_for_secctx()],
                     )
                 }))
             }
@@ -161,7 +176,6 @@ impl<'buf> Iterator for RetIterator<'buf> {
                 );
                 RetVal::ReleaseWeak(ObjectRefLocal { data, extra_data })
             }
-            _ => todo!(),
         });
 
         self.buf = &self.buf[advance_bytes + 4..];

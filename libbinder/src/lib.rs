@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::CString,
     os::fd::{AsFd, OwnedFd},
     panic,
     path::Path,
@@ -235,6 +236,9 @@ impl Runtime {
                 flags: flags_out,
                 offsets: &packet.get_offsets(),
                 target,
+                secctx: None,
+                sender_euid: 0,
+                sender_pid: 0,
             },
         });
 
@@ -268,6 +272,11 @@ impl Runtime {
                 return_parser::RetVal::Err(e) => {
                     err = Some(anyhow::anyhow!(
                         "Error sending packet (kernel returned BR_ERROR): {e}"
+                    ));
+                }
+                return_parser::RetVal::FailedTransaction => {
+                    err = Some(anyhow::anyhow!(
+                        "Kernel cannot send transaction for some reason, See dmesg"
                     ));
                 }
                 return_parser::RetVal::Ok => panic!("Not expecting BR_OK"),
@@ -331,6 +340,11 @@ impl Runtime {
             }
         };
 
+        let caller_identity = object::CallerIdentity {
+            sender_euid: transaction.get_data().sender_euid,
+            sender_pid: transaction.get_data().sender_pid,
+            sender_security_ctx: transaction.get_data().secctx.map(CString::from),
+        };
         let code = transaction.get_data().code;
         let flags = object::Flag::from_raw(transaction.get_data().flags);
         let mut packet = Packet::from_kernel(self.clone(), transaction);
@@ -341,7 +355,7 @@ impl Runtime {
         }
 
         let reply = meta
-            .on_transaction(code, flags, &mut packet)
+            .on_transaction(code, flags, &mut packet, Some(caller_identity))
             .expect("Cannot perform transaction");
         drop(packet);
 
@@ -363,6 +377,9 @@ impl Runtime {
                     data: 0,
                     extra_data: 0,
                 }),
+                secctx: None,
+                sender_euid: 0,
+                sender_pid: 0,
             },
         });
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
