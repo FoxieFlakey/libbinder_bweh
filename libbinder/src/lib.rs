@@ -161,7 +161,6 @@ impl Runtime {
 
     pub(crate) fn do_read_write(
         &self,
-        can_block: bool,
         mut write_buf: &[u8],
         mut read_buf: &mut [u8],
     ) -> anyhow::Result<usize> {
@@ -229,7 +228,7 @@ impl Runtime {
         let mut write_buf = Vec::new();
         write_buf.extend_from_slice(&Command::SendTransaction.as_bytes());
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
-        self.do_read_write(true, &write_buf, &mut [])
+        self.do_read_write(&write_buf, &mut [])
             .context("Cannot send packet")?;
 
         let mut ret_buf = [0; READ_BUF_SIZE];
@@ -239,7 +238,7 @@ impl Runtime {
 
         loop {
             let bytes_read = self
-                .do_read_write(true, &[], &mut ret_buf)
+                .do_read_write(&[], &mut ret_buf)
                 .context("Cannot wait for reply/transaction complete")?;
             let read = &ret_buf[0..bytes_read];
 
@@ -358,7 +357,7 @@ impl Runtime {
             },
         });
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
-        self.do_read_write(true, &write_buf, &mut [])
+        self.do_read_write(&write_buf, &mut [])
             .expect("Cannot send reply");
     }
 
@@ -388,7 +387,7 @@ impl Runtime {
                 buf.extend_from_slice(&Command::AcquireDone.as_bytes());
                 buf.extend_from_slice(&data.to_ne_bytes());
                 buf.extend_from_slice(&(0usize).to_ne_bytes());
-                self.do_read_write(false, &buf, &mut [])
+                self.do_read_write(&buf, &mut [])
                     .expect("Cannot send BC_ACQUIRE_DONE");
             }
             return_parser::RetVal::ReleaseStrong(ObjectRefLocal { data, .. }) => {
@@ -421,7 +420,7 @@ impl Runtime {
                 buf.extend_from_slice(&Command::AcquireWeakDone.as_bytes());
                 buf.extend_from_slice(&data.to_ne_bytes());
                 buf.extend_from_slice(&(0usize).to_ne_bytes());
-                self.do_read_write(false, &buf, &mut [])
+                self.do_read_write(&buf, &mut [])
                     .expect("Cannot send BC_INCREFS_DONE");
             }
             return_parser::RetVal::ReleaseWeak(ObjectRefLocal { data, .. }) => {
@@ -450,7 +449,7 @@ impl Runtime {
     fn loop_once(self: &Arc<Runtime>) {
         let mut read_buf = [0; READ_BUF_SIZE];
         let read_bytes = self
-            .do_read_write(false, &[], &mut read_buf)
+            .do_read_write(&[], &mut read_buf)
             .expect("Cannot read incoming transactions");
         for ret in unsafe { RetIterator::new(&read_buf[..read_bytes]) } {
             self.handle_misc_ret(ret);
@@ -458,12 +457,12 @@ impl Runtime {
     }
 
     fn exit_looper(&self) {
-        self.do_read_write(false, &Command::ExitLooper.as_bytes(), &mut [])
+        self.do_read_write(&Command::ExitLooper.as_bytes(), &mut [])
             .expect("Cannot exit as looper");
     }
 
     fn enter_looper(&self) {
-        self.do_read_write(false, &Command::EnterLooper.as_bytes(), &mut [])
+        self.do_read_write(&Command::EnterLooper.as_bytes(), &mut [])
             .expect("Cannot enter as looper");
     }
 }
