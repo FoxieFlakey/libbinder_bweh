@@ -38,47 +38,11 @@ pub struct Packet {
 
 impl Drop for Packet {
     fn drop(&mut self) {
-        match &self.inner {
-            Either::Right(kernel) => {
-                let mut cmd = Vec::new();
-                cmd.extend_from_slice(&Command::FreeBuffer.as_bytes());
-                cmd.extend_from_slice(&kernel.get_kernel_buf().to_ne_bytes());
-
-                match binder_read_write(self.runtime.binder_dev.as_fd(), &cmd, &mut []) {
-                    Ok((_, read_count)) => Ok(read_count),
-                    Err((Errno::EAGAIN, (_, read_bytes))) => Ok(read_bytes),
-                    Err((e, ..)) => Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
-                }
-                .expect("Cannot free binder kernel buffer");
-            }
-
-            Either::Left(owned) => {
-                if !self.is_sent {
-                    drop_objects(&self.runtime, &owned.data, &owned.offsets)
-                }
-            }
-        }
+        self.perform_cleanup()
     }
 }
 
 impl Packet {
-    pub fn into_owned(self) -> Self {
-        let mut new_data = Vec::with_capacity(self.get_data().len());
-        let mut new_offsets = Vec::with_capacity(self.get_offsets().len());
-
-        new_data.extend_from_slice(self.get_data());
-        new_offsets.extend_from_slice(self.get_offsets());
-
-        Self {
-            runtime: self.runtime.clone(),
-            inner: Either::Left(Owned {
-                data: new_data,
-                offsets: new_offsets,
-            }),
-            is_sent: false,
-        }
-    }
-
     pub fn reader<'a>(&'a self) -> Reader<'a> {
         Reader::new(self)
     }
@@ -105,12 +69,41 @@ impl Packet {
         }
     }
 
-    pub fn clear(self) -> Writer {
+    fn perform_cleanup(&mut self) {
+        match &self.inner {
+            Either::Right(kernel) => {
+                let mut cmd = Vec::new();
+                cmd.extend_from_slice(&Command::FreeBuffer.as_bytes());
+                cmd.extend_from_slice(&kernel.get_kernel_buf().to_ne_bytes());
+
+                match binder_read_write(self.runtime.binder_dev.as_fd(), &cmd, &mut []) {
+                    Ok((_, read_count)) => Ok(read_count),
+                    Err((Errno::EAGAIN, (_, read_bytes))) => Ok(read_bytes),
+                    Err((e, ..)) => Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
+                }
+                .expect("Cannot free binder kernel buffer");
+            }
+
+            Either::Left(owned) => {
+                if !self.is_sent {
+                    drop_objects(&self.runtime, &owned.data, &owned.offsets)
+                }
+            }
+        }
+    }
+
+    pub fn recycle(self) -> Writer {
+        assert!(
+            self.inner.is_left(),
+            "Cannot recycle packet containing kernel binder buffer"
+        );
+
         let runtime = self.runtime.clone();
-        let packet = ManuallyDrop::new(self.into_owned());
+        let mut packet = ManuallyDrop::new(self);
+        packet.perform_cleanup();
+
         // SAFETY: Just wanted to move 'inner' out without trigger drop code
-        // the binder_dev must be None here, so no drop code need to run and drop code
-        // for inner, is moved here to be dropped later
+        // because we already called cleanup. Note: kinda
         let mut owned = unsafe { ptr::read(&packet.inner) }.left().unwrap();
 
         owned.data.clear();
