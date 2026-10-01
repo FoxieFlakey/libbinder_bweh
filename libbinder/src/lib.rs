@@ -12,8 +12,7 @@ use enumflags2::BitFlags;
 use libbinder_sys::{
     commands::Command,
     transaction::{
-        Transaction, TransactionDataCommon, TransactionFlag, TransactionKernelManaged,
-        TransactionNotKernelMananged,
+        Transaction, TransactionDataCommon, TransactionKernelManaged, TransactionNotKernelMananged,
     },
     types::reference::{ObjectRef, ObjectRefLocal, ObjectRefRemote},
     write_read::binder_read_write,
@@ -28,7 +27,7 @@ use sharded_slab::Slab;
 
 use crate::{
     mmap::Mmap,
-    object::{B, Flag, ObjectTrait},
+    object::{B, ObjectTrait},
     packet::Packet,
     pipe::Pipe,
     proxy::Proxy,
@@ -224,7 +223,7 @@ impl Runtime {
         flags: BitFlags<object::Flag>,
         packet: &mut Packet,
         target: ObjectRef,
-    ) -> anyhow::Result<Option<(u32, BitFlags<TransactionFlag>, Packet)>> {
+    ) -> anyhow::Result<Option<(u32, Packet)>> {
         let flags_out = object::Flag::into_raw(flags);
         let is_one_way = flags.contains(object::Flag::OneWay);
 
@@ -283,7 +282,6 @@ impl Runtime {
                 return_parser::RetVal::Reply(transaction) => {
                     assert!(!is_one_way, "Kernel sent reply for one way??");
                     let code = transaction.get_common().code;
-                    let flags = transaction.get_common().flags;
                     let kernel = match transaction {
                         Transaction::KernelManaged(x) => x,
                         Transaction::NotKernelManaged(_) => {
@@ -295,7 +293,7 @@ impl Runtime {
                         err = Some(anyhow!("Kernel sent double reply??"));
                     }
 
-                    reply = Some((code, flags, Packet::from_kernel(self.clone(), kernel)));
+                    reply = Some((code, Packet::from_kernel(self.clone(), kernel)));
                 }
                 return_parser::RetVal::DeadReply => err = Some(anyhow!("Target died")),
                 _ => unreachable!(),
@@ -335,38 +333,31 @@ impl Runtime {
         let code = transaction.get_data().code;
         let flags = object::Flag::from_raw(transaction.get_data().flags);
         let mut packet = Packet::from_kernel(self.clone(), transaction);
-
-        let mut reply = packet::Writer::new(self.clone());
-        let mut reply_code = 0;
-        let mut reply_flags = Default::default();
-        let reply_option = if flags.contains(Flag::OneWay) {
-            None
-        } else {
-            Some((&mut reply_code, &mut reply_flags, &mut reply))
-        };
-
         let meta = self.local_objects.get(target).unwrap();
         let control = meta.control.read().unwrap();
         if !control.has_strong && !control.has_weak {
             panic!("Attempting to handle transaction on object that was already removed")
         }
 
-        meta.on_transaction(code, flags, &mut packet, reply_option)
+        let reply = meta
+            .on_transaction(code, flags, &mut packet)
             .expect("Cannot perform transaction");
+        drop(packet);
 
         if flags.contains(object::Flag::OneWay) {
             // no need to handle replying
             return;
         }
 
+        let (reply_code, reply) = reply.unwrap();
         let mut write_buf = Vec::new();
         write_buf.extend_from_slice(&Command::SendReply.as_bytes());
         let transaction = Transaction::NotKernelManaged(TransactionNotKernelMananged {
             data: TransactionDataCommon {
-                code,
-                data_slice: &packet.get_data(),
-                flags: object::Flag::into_raw(flags),
-                offsets: &packet.get_offsets(),
+                code: reply_code,
+                data_slice: &reply.get_data(),
+                flags: BitFlags::default(),
+                offsets: &reply.get_offsets(),
                 target: ObjectRef::Local(ObjectRefLocal {
                     data: 0,
                     extra_data: 0,

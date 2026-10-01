@@ -4,10 +4,7 @@ use std::{
     sync::{RwLock, Weak},
 };
 
-use crate::{
-    Runtime,
-    packet::{self, Packet},
-};
+use crate::{Runtime, packet::Packet};
 use enumflags2::{BitFlags, bitflags};
 use libbinder_sys::transaction::TransactionFlag;
 
@@ -40,10 +37,9 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
     fn on_transaction(
         &self,
         code: u32,
-        flags: BitFlags<Flag>,
+        flags: enumflags2::BitFlags<Flag>,
         message: &mut Packet,
-        reply: Option<(&mut u32, &mut BitFlags<Flag>, &mut packet::Writer)>,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<Option<(u32, Packet)>>;
 }
 
 pub struct B<T: ObjectTrait + ?Sized> {

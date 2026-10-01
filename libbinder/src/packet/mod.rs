@@ -108,8 +108,7 @@ impl Packet {
 
         owned.data.clear();
         owned.offsets.clear();
-        // SAFETY: We just make exclusive ownership of binder objects
-        unsafe { Writer::from_existing(runtime, owned.data, owned.offsets) }
+        Writer::new_recycled(runtime, owned.data, owned.offsets)
     }
 
     // Appropriately does needed strong count increments

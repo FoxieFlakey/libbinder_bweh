@@ -10,7 +10,7 @@ use enumflags2::BitFlags;
 use libbinder::{
     ContextManagerInfo, Runtime,
     object::{self, B, ObjectTrait},
-    packet,
+    packet::{self, Packet},
 };
 
 struct Concrete(Weak<Runtime>, String);
@@ -20,9 +20,8 @@ impl ObjectTrait for Concrete {
         &self,
         code: u32,
         _flags: enumflags2::BitFlags<object::Flag>,
-        message: &mut packet::Packet,
-        _reply: Option<(&mut u32, &mut BitFlags<object::Flag>, &mut packet::Writer)>,
-    ) -> anyhow::Result<()> {
+        message: &mut Packet,
+    ) -> anyhow::Result<Option<(u32, Packet)>> {
         println!("Handled code in {}: {code}", self.1);
 
         if code == 2929 {
@@ -39,14 +38,17 @@ impl ObjectTrait for Concrete {
                 w.finish()
             };
 
-            obj.on_transaction(1111, BitFlags::default(), &mut packet, None)
+            obj.on_transaction(1111, BitFlags::default(), &mut packet)
                 .unwrap();
         }
 
         if code == 1111 {
             println!("Special code received 1111 :333");
         }
-        Ok(())
+        Ok(Some((
+            0,
+            packet::Writer::new(self.0.upgrade().unwrap()).finish(),
+        )))
     }
 }
 
@@ -94,7 +96,7 @@ pub fn main() {
             };
 
             rt.get_manager()
-                .on_transaction(2929, BitFlags::default(), &mut packet, None)
+                .on_transaction(2929, BitFlags::default(), &mut packet)
                 .unwrap();
             thread::sleep(Duration::from_secs(1));
         }

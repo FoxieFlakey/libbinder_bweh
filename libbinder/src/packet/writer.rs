@@ -30,26 +30,14 @@ impl Writer {
         }
     }
 
-    // # Safety
-    // By doing this you are transfering ownership of all binder objects
-    // to the writer
-    pub(super) unsafe fn from_existing(
-        runtime: Arc<Runtime>,
-        data: Vec<u8>,
-        offsets: Vec<usize>,
-    ) -> Self {
+    pub fn new_recycled(runtime: Arc<Runtime>, mut data: Vec<u8>, mut offsets: Vec<usize>) -> Self {
+        data.clear();
+        offsets.clear();
         Self {
             runtime,
             data,
             offsets,
         }
-    }
-
-    pub fn copy_from(&mut self, other: &Packet) {
-        self.data.clear();
-        self.offsets.clear();
-        self.data.extend_from_slice(other.get_data());
-        self.offsets.extend_from_slice(other.get_offsets());
     }
 
     pub fn get_data(&self) -> &[u8] {
