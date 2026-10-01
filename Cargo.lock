@@ -139,6 +139,8 @@ dependencies = [
 name = "libbinder-test"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "enumflags2",
  "libbinder",
 ]
 
