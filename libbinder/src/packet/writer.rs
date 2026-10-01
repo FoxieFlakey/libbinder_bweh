@@ -68,6 +68,7 @@ impl Writer {
     pub fn finish(mut self) -> Packet {
         Packet {
             runtime: self.runtime.clone(),
+            is_sent: false,
             inner: Either::Left(Owned {
                 data: mem::take(&mut self.data),
                 offsets: mem::take(&mut self.offsets),

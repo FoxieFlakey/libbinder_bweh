@@ -33,6 +33,7 @@ struct Owned {
 pub struct Packet {
     runtime: Arc<Runtime>,
     inner: Either<Owned, TransactionKernelManaged>,
+    is_sent: bool,
 }
 
 impl Drop for Packet {
@@ -51,7 +52,11 @@ impl Drop for Packet {
                 .expect("Cannot free binder kernel buffer");
             }
 
-            Either::Left(owned) => drop_objects(&self.runtime, &owned.data, &owned.offsets),
+            Either::Left(owned) => {
+                if !self.is_sent {
+                    drop_objects(&self.runtime, &owned.data, &owned.offsets)
+                }
+            }
         }
     }
 }
@@ -70,6 +75,7 @@ impl Packet {
                 data: new_data,
                 offsets: new_offsets,
             }),
+            is_sent: false,
         }
     }
 
@@ -81,6 +87,7 @@ impl Packet {
         Self {
             runtime: runtime,
             inner: Either::Right(kernel),
+            is_sent: false,
         }
     }
 
@@ -98,14 +105,16 @@ impl Packet {
         }
     }
 
-    pub fn writer(self) -> Writer {
+    pub fn clear(self) -> Writer {
         let runtime = self.runtime.clone();
         let packet = ManuallyDrop::new(self.into_owned());
         // SAFETY: Just wanted to move 'inner' out without trigger drop code
         // the binder_dev must be None here, so no drop code need to run and drop code
         // for inner, is moved here to be dropped later
-        let owned = unsafe { ptr::read(&packet.inner) }.left().unwrap();
+        let mut owned = unsafe { ptr::read(&packet.inner) }.left().unwrap();
 
+        owned.data.clear();
+        owned.offsets.clear();
         // SAFETY: We just make exclusive ownership of binder objects
         unsafe { Writer::from_existing(runtime, owned.data, owned.offsets) }
     }
@@ -116,7 +125,7 @@ impl Packet {
     // this packeet is sent. This directly will increment
     // necessary strong counters on each objects like local
     // references
-    pub(crate) unsafe fn objects_sent(&self) {
+    pub(crate) unsafe fn objects_sent(&mut self) {
         for_each_object(self.get_data(), self.get_offsets(), |object| match object {
             ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => {
                 self.runtime
@@ -130,6 +139,7 @@ impl Packet {
             }
             ObjectParsed::RemoteReference(_) => (),
         });
+        self.is_sent = true;
     }
 }
 
@@ -145,8 +155,21 @@ where
 
 fn drop_objects(runtime: &Arc<Runtime>, data: &[u8], offsets: &[usize]) {
     for_each_object(data, offsets, |object| match object {
-        ObjectParsed::LocalReference(x) => {
-            runtime.handle_misc_ret(crate::return_parser::RetVal::ReleaseStrong(x));
+        ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => {
+            let object = runtime.local_objects.get(data).unwrap();
+            let control = object.control.read().unwrap();
+            if control.has_strong || control.has_weak {
+                // Kernel have reference to it, so do nothing
+                // it will later sent BR_RELEASE and BR_DECREFS
+                return;
+            }
+
+            let object = runtime.local_objects.take(data).unwrap();
+            let control = object.control.read().unwrap();
+            assert!(
+                !control.has_strong && !control.has_weak,
+                "Kernel pull reference form nowhere :<"
+            );
         }
         ObjectParsed::RemoteReference(_) => (),
     });

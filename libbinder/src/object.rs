@@ -41,7 +41,7 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
         &self,
         code: u32,
         flags: BitFlags<Flag>,
-        message: &Packet,
+        message: &mut Packet,
         reply: Option<(&mut u32, &mut BitFlags<Flag>, &mut packet::Writer)>,
     ) -> anyhow::Result<()>;
 }

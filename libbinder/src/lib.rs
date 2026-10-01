@@ -225,7 +225,7 @@ impl Runtime {
         self: &Arc<Runtime>,
         code: u32,
         flags: BitFlags<object::Flag>,
-        packet: &Packet,
+        packet: &mut Packet,
         target: ObjectRef,
     ) -> anyhow::Result<Option<(u32, BitFlags<TransactionFlag>, Packet)>> {
         let flags_out = object::Flag::into_raw(flags);
@@ -266,41 +266,46 @@ impl Runtime {
             }
 
             // SAFETY: Kernel jsut wrote it
-            for ret in unsafe { RetIterator::new(&read) } {
-                match ret {
-                    return_parser::RetVal::Err(e) => {
-                        bail!("Error sending packet (kernel returned BR_ERROR): {e}")
-                    }
-                    return_parser::RetVal::Ok => panic!("Not expecting BR_OK"),
-                    return_parser::RetVal::TransactionComplete => {
-                        is_completed = true;
-                    }
-                    return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
-                        self.handle_transaction(transaction);
-                    }
-                    return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
-                        unreachable!("Kernel should not return not kernel managed transactions")
-                    }
-                    return_parser::RetVal::Reply(transaction) => {
-                        assert!(!is_one_way, "Kernel sent reply for one way??");
-                        let code = transaction.get_common().code;
-                        let flags = transaction.get_common().flags;
-                        let kernel = match transaction {
-                            Transaction::KernelManaged(x) => x,
-                            Transaction::NotKernelManaged(_) => {
-                                unreachable!("This has to be from kernel")
-                            }
-                        };
-
-                        if reply.is_some() {
-                            bail!("Kernel sent double reply??")
-                        }
-
-                        reply = Some((code, flags, Packet::from_kernel(self.clone(), kernel)));
-                    }
-                    return_parser::RetVal::DeadReply => bail!("Target died"),
-                    x => self.handle_misc_ret(x),
+            let mut err = None;
+            self.handle_ret_values(unsafe { RetIterator::new(&read) }, |ret| match ret {
+                return_parser::RetVal::Err(e) => {
+                    err = Some(anyhow::anyhow!(
+                        "Error sending packet (kernel returned BR_ERROR): {e}"
+                    ));
                 }
+                return_parser::RetVal::Ok => panic!("Not expecting BR_OK"),
+                return_parser::RetVal::TransactionComplete => {
+                    is_completed = true;
+                }
+                return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
+                    self.handle_transaction(transaction);
+                }
+                return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
+                    unreachable!("Kernel should not return not kernel managed transactions")
+                }
+                return_parser::RetVal::Reply(transaction) => {
+                    assert!(!is_one_way, "Kernel sent reply for one way??");
+                    let code = transaction.get_common().code;
+                    let flags = transaction.get_common().flags;
+                    let kernel = match transaction {
+                        Transaction::KernelManaged(x) => x,
+                        Transaction::NotKernelManaged(_) => {
+                            unreachable!("This has to be from kernel")
+                        }
+                    };
+
+                    if reply.is_some() {
+                        err = Some(anyhow!("Kernel sent double reply??"));
+                    }
+
+                    reply = Some((code, flags, Packet::from_kernel(self.clone(), kernel)));
+                }
+                return_parser::RetVal::DeadReply => err = Some(anyhow!("Target died")),
+                _ => unreachable!(),
+            });
+
+            if let Some(err) = err {
+                return Err(err);
             }
 
             if is_completed && reply.is_some() {
@@ -332,7 +337,7 @@ impl Runtime {
 
         let code = transaction.get_data().code;
         let flags = object::Flag::from_raw(transaction.get_data().flags);
-        let packet = Packet::from_kernel(self.clone(), transaction);
+        let mut packet = Packet::from_kernel(self.clone(), transaction);
 
         let mut reply = packet::Writer::new(self.clone());
         let mut reply_code = 0;
@@ -349,7 +354,7 @@ impl Runtime {
             panic!("Attempting to handle transaction on object that was already removed")
         }
 
-        meta.on_transaction(code, flags, &packet, reply_option)
+        meta.on_transaction(code, flags, &mut packet, reply_option)
             .expect("Cannot perform transaction");
 
         if flags.contains(object::Flag::OneWay) {
@@ -377,90 +382,97 @@ impl Runtime {
             .expect("Cannot send reply");
     }
 
-    fn handle_misc_ret(self: &Arc<Runtime>, ret: RetVal<'_>) {
-        match ret {
-            return_parser::RetVal::TransactionComplete => (),
-            return_parser::RetVal::DeadReply => panic!("Unexpected dead reply"),
-            return_parser::RetVal::Ok => (),
-            return_parser::RetVal::Reply(_) => panic!("Unexpected reply"),
-            return_parser::RetVal::Err(e) => panic!("Unexpected error: {e}"),
-            return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
-                unreachable!("Kernel should not return non kernel managed transaction")
-            }
-            return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
-                self.handle_transaction(transaction);
-            }
-            return_parser::RetVal::DeadBinder(_) => (),
-            return_parser::RetVal::SpawnLooper => {
-                println!("Kernel requested a looper");
-                self.spawn_looper(true);
-            }
-            return_parser::RetVal::AcquireStrong(ObjectRefLocal { data, .. }) => {
-                let meta = self
-                    .local_objects
-                    .get(data)
-                    .expect("Cannot find local object");
-                meta.control.write().unwrap().has_strong = true;
-
-                let mut buf = Vec::new();
-                buf.extend_from_slice(&Command::AcquireDone.as_bytes());
-                buf.extend_from_slice(&data.to_ne_bytes());
-                buf.extend_from_slice(&(0usize).to_ne_bytes());
-                self.do_read_write(&buf, &mut [])
-                    .expect("Cannot send BC_ACQUIRE_DONE");
-            }
-            return_parser::RetVal::ReleaseStrong(ObjectRefLocal { data, .. }) => {
-                let meta = self
-                    .local_objects
-                    .get(data)
-                    .expect("Cannot find local object");
-                let mut control = meta.control.write().unwrap();
-                assert!(
-                    control.has_strong,
-                    "kernel sent inconsistent state for {data}"
-                );
-                control.has_strong = false;
-
-                if !control.has_weak {
-                    drop(control);
-                    drop(meta);
-                    self.local_objects
-                        .take(data)
-                        .expect("Cannot remove local object");
+    fn handle_ret_values<F>(self: &Arc<Runtime>, ret_iterator: RetIterator<'_>, mut handler: F)
+    where
+        F: FnMut(RetVal<'_>),
+    {
+        for ret in ret_iterator {
+            match ret {
+                return_parser::RetVal::Ok => (),
+                return_parser::RetVal::Err(e) => panic!("Unexpected error: {e}"),
+                return_parser::RetVal::Transaction(Transaction::NotKernelManaged(_)) => {
+                    unreachable!("Kernel should not return non kernel managed transaction")
                 }
-            }
-            return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
-                let meta = self
-                    .local_objects
-                    .get(data)
-                    .expect("Cannot find local object");
-                meta.control.write().unwrap().has_weak = true;
-                let mut buf = Vec::new();
-                buf.extend_from_slice(&Command::AcquireWeakDone.as_bytes());
-                buf.extend_from_slice(&data.to_ne_bytes());
-                buf.extend_from_slice(&(0usize).to_ne_bytes());
-                self.do_read_write(&buf, &mut [])
-                    .expect("Cannot send BC_INCREFS_DONE");
-            }
-            return_parser::RetVal::ReleaseWeak(ObjectRefLocal { data, .. }) => {
-                let meta = self
-                    .local_objects
-                    .get(data)
-                    .expect("Cannot find local object");
-                let mut control = meta.control.write().unwrap();
-                assert!(
-                    control.has_weak,
-                    "kernel sent inconsistent state for {data}"
-                );
-                control.has_weak = false;
-
-                if !control.has_strong {
-                    drop(control);
-                    drop(meta);
-                    self.local_objects
-                        .take(data)
-                        .expect("Cannot remove local object");
+                return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
+                    self.handle_transaction(transaction);
                 }
+                return_parser::RetVal::DeadBinder(_) => (),
+                return_parser::RetVal::SpawnLooper => {
+                    println!("Kernel requested a looper");
+                    self.spawn_looper(true);
+                }
+                return_parser::RetVal::AcquireStrong(ObjectRefLocal { data, .. }) => {
+                    println!("acquire strong {data}");
+                    let meta = self
+                        .local_objects
+                        .get(data)
+                        .expect("Cannot find local object");
+                    meta.control.write().unwrap().has_strong = true;
+
+                    let mut buf = Vec::new();
+                    buf.extend_from_slice(&Command::AcquireDone.as_bytes());
+                    buf.extend_from_slice(&data.to_ne_bytes());
+                    buf.extend_from_slice(&(0usize).to_ne_bytes());
+                    self.do_read_write(&buf, &mut [])
+                        .expect("Cannot send BC_ACQUIRE_DONE");
+                }
+                return_parser::RetVal::ReleaseStrong(ObjectRefLocal { data, .. }) => {
+                    println!("release strong {data}");
+                    let meta = self
+                        .local_objects
+                        .get(data)
+                        .expect("Cannot find local object");
+                    let mut control = meta.control.write().unwrap();
+                    assert!(
+                        control.has_strong,
+                        "kernel sent inconsistent state for {data}"
+                    );
+                    control.has_strong = false;
+
+                    if !control.has_weak {
+                        drop(control);
+                        drop(meta);
+                        self.local_objects
+                            .take(data)
+                            .expect("Cannot remove local object");
+                    }
+                }
+                return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
+                    println!("acquire weak {data}");
+                    let meta = self
+                        .local_objects
+                        .get(data)
+                        .expect("Cannot find local object");
+                    meta.control.write().unwrap().has_weak = true;
+                    let mut buf = Vec::new();
+                    buf.extend_from_slice(&Command::AcquireWeakDone.as_bytes());
+                    buf.extend_from_slice(&data.to_ne_bytes());
+                    buf.extend_from_slice(&(0usize).to_ne_bytes());
+                    self.do_read_write(&buf, &mut [])
+                        .expect("Cannot send BC_INCREFS_DONE");
+                }
+                return_parser::RetVal::ReleaseWeak(ObjectRefLocal { data, .. }) => {
+                    println!("release weak {data}");
+                    let meta = self
+                        .local_objects
+                        .get(data)
+                        .expect("Cannot find local object");
+                    let mut control = meta.control.write().unwrap();
+                    assert!(
+                        control.has_weak,
+                        "kernel sent inconsistent state for {data}"
+                    );
+                    control.has_weak = false;
+
+                    if !control.has_strong {
+                        drop(control);
+                        drop(meta);
+                        self.local_objects
+                            .take(data)
+                            .expect("Cannot remove local object");
+                    }
+                }
+                x => handler(x),
             }
         }
     }
@@ -470,9 +482,9 @@ impl Runtime {
         let read_bytes = self
             .do_read_write(&[], &mut read_buf)
             .expect("Cannot read incoming transactions");
-        for ret in unsafe { RetIterator::new(&read_buf[..read_bytes]) } {
-            self.handle_misc_ret(ret);
-        }
+        self.handle_ret_values(unsafe { RetIterator::new(&read_buf[..read_bytes]) }, |_| {
+            unreachable!("Unexpected")
+        });
     }
 
     fn exit_looper(&self) {

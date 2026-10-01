@@ -23,7 +23,7 @@ impl ObjectTrait for Proxy {
         &self,
         code: u32,
         flags: enumflags2::BitFlags<crate::object::Flag>,
-        message: &crate::packet::Packet,
+        message: &mut crate::packet::Packet,
         reply: Option<(
             &mut u32,
             &mut BitFlags<object::Flag>,

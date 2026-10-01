@@ -1,6 +1,8 @@
 use std::{
     mem,
     sync::{Arc, Weak},
+    thread,
+    time::Duration,
 };
 
 use enumflags2::BitFlags;
@@ -18,7 +20,7 @@ impl ObjectTrait for Concrete {
         &self,
         code: u32,
         _flags: enumflags2::BitFlags<object::Flag>,
-        message: &packet::Packet,
+        message: &mut packet::Packet,
         _reply: Option<(&mut u32, &mut BitFlags<object::Flag>, &mut packet::Writer)>,
     ) -> anyhow::Result<()> {
         println!("Handled code in {}: {code}", self.1);
@@ -26,7 +28,7 @@ impl ObjectTrait for Concrete {
         if code == 2929 {
             println!("Special code received 2929 calling back to specific one :333");
             let obj = message.reader().read_reference().unwrap();
-            let packet = {
+            let mut packet = {
                 let mut w = packet::Writer::new(self.0.upgrade().unwrap());
                 w.write_reference(Arc::new(B::new(Concrete(
                     self.0.clone(),
@@ -37,7 +39,7 @@ impl ObjectTrait for Concrete {
                 w.finish()
             };
 
-            obj.on_transaction(1111, BitFlags::default(), &packet, None)
+            obj.on_transaction(1111, BitFlags::default(), &mut packet, None)
                 .unwrap();
         }
 
@@ -80,7 +82,7 @@ pub fn lib_main() {
             )
             .unwrap();
 
-            let packet = {
+            let mut packet = {
                 let mut w = packet::Writer::new(rt.clone());
                 w.write_reference(Arc::new(B::new(Concrete(
                     Arc::downgrade(&rt),
@@ -92,8 +94,9 @@ pub fn lib_main() {
             };
 
             rt.get_manager()
-                .on_transaction(2929, BitFlags::default(), &packet, None)
+                .on_transaction(2929, BitFlags::default(), &mut packet, None)
                 .unwrap();
+            thread::sleep(Duration::from_secs(1));
         }
         Some(x) => {
             eprintln!("Unknown mode: {x}");
