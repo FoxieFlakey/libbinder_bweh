@@ -76,7 +76,7 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
         // If None it means local transaction (a.k.a
         // direct call)
         caller_identity: Option<CallerIdentity>,
-    ) -> anyhow::Result<Option<(u32, Packet)>>;
+    ) -> Option<(u32, Packet)>;
 }
 
 pub struct B<T: ObjectTrait + ?Sized> {

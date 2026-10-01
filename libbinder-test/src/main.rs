@@ -22,7 +22,7 @@ impl ObjectTrait for Concrete {
         _flags: enumflags2::BitFlags<object::Flag>,
         message: &mut Packet,
         caller_identity: Option<CallerIdentity>,
-    ) -> anyhow::Result<Option<(u32, Packet)>> {
+    ) -> Option<(u32, Packet)> {
         println!(
             "Handled code in {}: {code} from PID {} and EUID {}, security context {}",
             self.1,
@@ -63,10 +63,7 @@ impl ObjectTrait for Concrete {
         if code == 1111 {
             println!("Special code received 1111 :333");
         }
-        Ok(Some((
-            0,
-            packet::Writer::new(self.0.upgrade().unwrap()).finish(),
-        )))
+        Some((0, packet::Writer::new(self.0.upgrade().unwrap()).finish()))
     }
 }
 
@@ -86,7 +83,7 @@ pub fn main() {
                         Ok(Arc::new(B::new_with_flags(
                             Concrete(Arc::downgrade(rt), "context manager".to_string()),
                             ObjectFlags {
-                                want_transaction_security_context: true,
+                                want_transaction_security_context: false,
                                 ..Default::default()
                             },
                         )))
@@ -119,7 +116,6 @@ pub fn main() {
             rt.get_manager()
                 .on_transaction(2929, BitFlags::default(), &mut packet, None)
                 .unwrap();
-            thread::sleep(Duration::from_secs(1));
         }
         Some(x) => {
             eprintln!("Unknown mode: {x}");

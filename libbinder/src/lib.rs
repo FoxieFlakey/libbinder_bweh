@@ -354,7 +354,7 @@ impl Runtime {
             panic!("Attempting to handle transaction on object that was already removed")
         }
 
-        let reply = meta
+        let (reply_code, reply) = meta
             .on_transaction(code, flags, &mut packet, Some(caller_identity))
             .expect("Cannot perform transaction");
         drop(packet);
@@ -364,7 +364,6 @@ impl Runtime {
             return;
         }
 
-        let (reply_code, reply) = reply.unwrap();
         let mut write_buf = Vec::new();
         write_buf.extend_from_slice(&Command::SendReply.as_bytes());
         let transaction = Transaction::NotKernelManaged(TransactionNotKernelMananged {

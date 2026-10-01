@@ -22,7 +22,7 @@ impl ObjectTrait for Proxy {
         message: &mut crate::packet::Packet,
         // When sending out this is ignored
         caller_identity: Option<CallerIdentity>,
-    ) -> anyhow::Result<Option<(u32, crate::packet::Packet)>> {
+    ) -> Option<(u32, crate::packet::Packet)> {
         assert!(
             caller_identity.is_none(),
             "Sending out to remote do not support setting caller identity"
@@ -32,9 +32,7 @@ impl ObjectTrait for Proxy {
             .rt
             .upgrade()
             .expect("Runtime is not alive anymore for Binder proxy");
-        let (ret_code, ret_reply) = rt
-            .send_packet(code, flags, message, ObjectRef::Remote(self.remote_ref))?
-            .unwrap();
-        Ok(Some((ret_code, ret_reply)))
+        rt.send_packet(code, flags, message, ObjectRef::Remote(self.remote_ref))
+            .expect("Cannot send transaction")
     }
 }
