@@ -98,7 +98,7 @@ impl Runtime {
                 shutdown_pipe: shutdown_pipe.clone(),
                 manager: OnceLock::new(),
                 join_handle: thread::spawn(move || {
-                    worker(dev, shutdown_pipe, init_done_recv, weak.clone())
+                    worker(dev, shutdown_pipe, init_done_recv, weak.clone(), false)
                 }),
                 local_objects: Slab::new(),
             }
@@ -461,6 +461,11 @@ impl Runtime {
             .expect("Cannot exit as looper");
     }
 
+    fn register_looper(&self) {
+        self.do_read_write(&Command::RegisterLooper.as_bytes(), &mut [])
+            .expect("Cannot register as looper");
+    }
+
     fn enter_looper(&self) {
         self.do_read_write(&Command::EnterLooper.as_bytes(), &mut [])
             .expect("Cannot enter as looper");
@@ -472,9 +477,15 @@ fn worker(
     shutdown_pipe: Arc<Pipe<bool>>,
     init_done: oneshot::Receiver<()>,
     runtime: Weak<Runtime>,
+    is_spawned_by_kernel: bool,
 ) {
     init_done.recv().unwrap();
-    runtime.upgrade().unwrap().enter_looper();
+
+    if is_spawned_by_kernel {
+        runtime.upgrade().unwrap().register_looper();
+    } else {
+        runtime.upgrade().unwrap().enter_looper();
+    }
 
     loop {
         let mut pollfd = [
