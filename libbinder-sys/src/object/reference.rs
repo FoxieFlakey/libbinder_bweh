@@ -75,13 +75,10 @@ impl ObjectRef {
     }
 
     pub fn with_raw_bytes<R, F: FnOnce(&[u8]) -> R>(&self, func: F) -> R {
-        let raw = match self {
-            ObjectRef::Local(x) => x.into_raw(),
-            ObjectRef::Remote(x) => x.into_raw(),
-        };
-
-        let ret = func(bytemuck::bytes_of(&raw));
-        ret
+        match self {
+            ObjectRef::Local(x) => x.with_raw_bytes(func),
+            ObjectRef::Remote(x) => x.with_raw_bytes(func),
+        }
     }
 }
 
@@ -104,12 +101,20 @@ pub const CONTEXT_MANAGER_REF: ObjectRefRemote = ObjectRefRemote {
 };
 
 impl ObjectRefLocal {
-    pub(crate) fn into_raw(&self) -> ObjectRefRaw {
+    pub fn with_raw_bytes<R, F: FnOnce(&[u8]) -> R>(&self, func: F) -> R {
+        self.with_raw_bytes_and_flag(0, func)
+    }
+
+    pub fn with_raw_bytes_and_flag<R, F: FnOnce(&[u8]) -> R>(&self, flags: u32, func: F) -> R {
+        func(bytemuck::bytes_of(&self.into_raw_with_flags(flags)))
+    }
+
+    pub(crate) fn into_raw_with_flags(&self, object_flags: u32) -> ObjectRefRaw {
         ObjectRefRaw {
             header: ObjectHeaderRaw {
                 kind: object::BINDER,
             },
-            flags: 0,
+            flags: object_flags,
             binder_or_handle: BinderOrHandleUnion { binder: self.data },
             extra_data: self.extra_data,
         }
@@ -117,8 +122,8 @@ impl ObjectRefLocal {
 }
 
 impl ObjectRefRemote {
-    pub(crate) fn into_raw(&self) -> ObjectRefRaw {
-        ObjectRefRaw {
+    pub fn with_raw_bytes<R, F: FnOnce(&[u8]) -> R>(&self, func: F) -> R {
+        func(bytemuck::bytes_of(&ObjectRefRaw {
             header: ObjectHeaderRaw {
                 kind: object::HANDLE,
             },
@@ -127,7 +132,7 @@ impl ObjectRefRemote {
                 handle: self.data_handle,
             },
             extra_data: 0,
-        }
+        }))
     }
 }
 

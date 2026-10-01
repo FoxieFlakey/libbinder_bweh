@@ -102,3 +102,11 @@ pub(crate) struct TransactionDataRaw {
     offsets_size: BinderUsize,
     data: DataUnion,
 }
+
+// Equivalent to struct binder_transaction_data_secctx
+#[derive(Clone, Copy, Zeroable, Pod)]
+#[repr(C)]
+pub(crate) struct TransactionDataSecctxRaw {
+    transaction_data: TransactionDataRaw,
+    secctx: BinderUsize,
+}

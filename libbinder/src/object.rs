@@ -8,6 +8,29 @@ use crate::{Runtime, packet::Packet};
 use enumflags2::{BitFlags, bitflags};
 use libbinder_sys::transaction::TransactionFlag;
 
+#[derive(Default, Clone, Copy)]
+pub struct ObjectFlags {
+    pub accept_fds: bool,
+    pub want_transaction_security_context: bool,
+    pub priority: u8,
+}
+
+impl ObjectFlags {
+    pub(crate) fn into_flags(&self) -> u32 {
+        let mut ret = 0;
+        if self.accept_fds {
+            ret |= libbinder_sys::types::FLAT_BINDER_FLAG_ACCEPTS_FDS;
+        }
+
+        if self.want_transaction_security_context {
+            ret |= libbinder_sys::types::FLAT_BINDER_FLAG_TXN_SECURITY_CTX;
+        }
+
+        ret |= u32::from(self.priority) & libbinder_sys::types::FLAT_BINDER_FLAG_PRIORITY_MASK;
+        ret
+    }
+}
+
 #[bitflags]
 #[repr(u16)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -54,6 +77,7 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
 
 pub struct B<T: ObjectTrait + ?Sized> {
     pub(crate) control: RwLock<Refs>,
+    pub(crate) flags: ObjectFlags,
     inner: T,
 }
 
@@ -65,6 +89,19 @@ impl<T: ObjectTrait> B<T> {
                 has_weak: false,
                 live_slot: None,
             }),
+            flags: ObjectFlags::default(),
+            inner: data,
+        }
+    }
+
+    pub fn new_with_flags(data: T, flags: ObjectFlags) -> Self {
+        Self {
+            control: RwLock::new(Refs {
+                has_strong: false,
+                has_weak: false,
+                live_slot: None,
+            }),
+            flags,
             inner: data,
         }
     }

@@ -116,6 +116,7 @@ impl Runtime {
                         data: id,
                         extra_data: 0,
                     },
+                    manager.flags.into_flags(),
                 )
                 .context("Cannot become context manager")?;
                 manager

@@ -1,7 +1,7 @@
 use std::{mem, sync::Arc};
 
 use either::Either;
-use libbinder_sys::types::reference::{ObjectRef, ObjectRefLocal};
+use libbinder_sys::types::reference::ObjectRefLocal;
 
 use crate::{
     Runtime,
@@ -78,10 +78,12 @@ impl Writer {
         );
 
         self.offsets.push(self.data.len());
-        let reference_raw = ObjectRef::Local(ObjectRefLocal {
+        let flags = reference.flags.into_flags();
+        let raw = ObjectRefLocal {
             data: self.runtime.add_object(reference),
             extra_data: 0,
-        });
-        reference_raw.with_raw_bytes(|bytes| self.data.extend_from_slice(bytes));
+        };
+
+        raw.with_raw_bytes_and_flag(flags, |bytes| self.data.extend_from_slice(bytes))
     }
 }

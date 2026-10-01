@@ -10,6 +10,10 @@ const fn pack_chars(c1: u8, c2: u8, c3: u8, c4: u8) -> u32 {
     ((c1 as u32) << 24) | ((c2 as u32) << 16) | ((c3 as u32) << 8) | (c4 as u32)
 }
 
+pub const FLAT_BINDER_FLAG_PRIORITY_MASK: u32 = 0xff;
+pub const FLAT_BINDER_FLAG_ACCEPTS_FDS: u32 = 0x100;
+pub const FLAT_BINDER_FLAG_TXN_SECURITY_CTX: u32 = 0x1000;
+
 pub(crate) const BINDER: u32 = pack_chars(b's', b'b', b'*', TYPE_LARGE);
 pub(crate) const WEAK_BINDER: u32 = pack_chars(b'w', b'b', b'*', TYPE_LARGE);
 pub(crate) const HANDLE: u32 = pack_chars(b's', b'h', b'*', TYPE_LARGE);

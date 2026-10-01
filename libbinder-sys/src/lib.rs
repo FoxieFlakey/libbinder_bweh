@@ -65,8 +65,9 @@ pub const BINDER_COMPILED_VERSION: Version = Version { version: 8 };
 pub fn binder_set_context_mgr(
     fd: BorrowedFd,
     manager_object: &ObjectRefLocal,
+    object_flags: u32,
 ) -> Result<(), Errno> {
-    let mut obj_ref = manager_object.into_raw();
+    let mut obj_ref = manager_object.into_raw_with_flags(object_flags);
     unsafe { ioctl::ioctl_set_context_mgr_ext(fd.as_raw_fd(), &raw mut obj_ref) }?;
     Ok(())
 }
