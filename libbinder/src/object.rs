@@ -5,7 +5,7 @@ use std::{
     sync::{RwLock, Weak},
 };
 
-use crate::{Runtime, packet::Packet};
+use crate::{Runtime, packet::Packet, proxy::Proxy};
 use enumflags2::{BitFlags, bitflags};
 use libbinder_sys::transaction::TransactionFlag;
 
@@ -68,6 +68,11 @@ impl Flag {
 }
 
 pub trait ObjectTrait: Sync + Send + Any + 'static {
+    // only return if current object just proxy
+    // to a remote. this is mainly so the remote
+    // handle can be immediately sent
+    fn get_remote<'a>(&'a self) -> Option<&'a Proxy>;
+
     fn on_transaction(
         &self,
         code: u32,

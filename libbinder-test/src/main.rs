@@ -11,11 +11,16 @@ use libbinder::{
     ContextManagerInfo, Runtime,
     object::{self, B, CallerIdentity, ObjectFlags, ObjectTrait},
     packet::{self, Packet},
+    proxy::Proxy,
 };
 
 struct Concrete(Weak<Runtime>, String);
 
 impl ObjectTrait for Concrete {
+    fn get_remote<'a>(&'a self) -> Option<&'a Proxy> {
+        None
+    }
+
     fn on_transaction(
         &self,
         code: u32,

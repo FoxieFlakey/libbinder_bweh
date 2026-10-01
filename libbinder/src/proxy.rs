@@ -15,6 +15,10 @@ pub struct Proxy {
 }
 
 impl ObjectTrait for Proxy {
+    fn get_remote<'a>(&'a self) -> Option<&'a Proxy> {
+        Some(self)
+    }
+
     fn on_transaction(
         &self,
         code: u32,

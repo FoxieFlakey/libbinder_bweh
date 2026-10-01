@@ -39,7 +39,7 @@ mod mmap;
 pub mod object;
 pub mod packet;
 mod pipe;
-mod proxy;
+pub mod proxy;
 mod return_parser;
 
 pub struct Runtime {

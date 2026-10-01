@@ -103,12 +103,20 @@ impl Writer {
         );
 
         self.offsets.push(self.data.len());
-        let flags = reference.flags.into_flags();
-        let raw = ObjectRefLocal {
-            data: self.runtime.add_object(reference),
-            extra_data: 0,
-        };
 
-        raw.with_raw_bytes_and_flag(flags, |bytes| self.data.extend_from_slice(bytes))
+        // Special handling if its remote
+        if let Some(remote) = reference.get_remote() {
+            remote
+                .remote_ref
+                .with_raw_bytes(|bytes| self.data.extend_from_slice(bytes))
+        } else {
+            let flags = reference.flags.into_flags();
+            let raw = ObjectRefLocal {
+                data: self.runtime.add_object(reference),
+                extra_data: 0,
+            };
+
+            raw.with_raw_bytes_and_flag(flags, |bytes| self.data.extend_from_slice(bytes))
+        }
     }
 }
