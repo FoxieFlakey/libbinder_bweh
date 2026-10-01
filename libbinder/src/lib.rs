@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     os::fd::{AsFd, OwnedFd},
+    panic,
     path::Path,
     sync::{Arc, Mutex, OnceLock, Weak},
     thread::{self, JoinHandle, ThreadId},
@@ -390,7 +391,10 @@ impl Runtime {
                 self.handle_transaction(transaction);
             }
             return_parser::RetVal::DeadBinder(_) => (),
-            return_parser::RetVal::SpawnLooper => (),
+            return_parser::RetVal::SpawnLooper => {
+                println!("Kernel requested a looper");
+                self.spawn_looper(true);
+            }
             return_parser::RetVal::AcquireStrong(ObjectRefLocal { data, .. }) => {
                 let meta = self
                     .local_objects
@@ -485,46 +489,69 @@ impl Runtime {
         self.do_read_write(&Command::EnterLooper.as_bytes(), &mut [])
             .expect("Cannot enter as looper");
     }
+
+    fn worker_died(self: &Arc<Runtime>, id: ThreadId) {
+        let mut threads = self.threads.lock().unwrap();
+        threads
+            .remove(&id)
+            .expect("Current thread must already exists in threads list");
+
+        // Thread has to be one thread exists. spawn it
+        if threads.len() == 0 {
+            drop(threads);
+            self.spawn_looper(false);
+        }
+    }
 }
 
 fn worker(
     dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
-    runtime: Arc<Runtime>,
+    runtime_strong: Arc<Runtime>,
     is_spawned_by_kernel: bool,
 ) {
     if is_spawned_by_kernel {
-        runtime.register_looper();
+        runtime_strong.register_looper();
     } else {
-        runtime.enter_looper();
+        runtime_strong.enter_looper();
     }
-    let runtime = Arc::downgrade(&runtime);
+    let runtime = Arc::downgrade(&runtime_strong);
+    drop(runtime_strong);
 
-    loop {
-        let mut pollfd = [
-            PollFd::new(dev.as_fd(), PollFlags::POLLIN),
-            PollFd::new(shutdown_pipe.get_read_fd(), PollFlags::POLLIN),
-        ];
+    let ret = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        loop {
+            let mut pollfd = [
+                PollFd::new(dev.as_fd(), PollFlags::POLLIN),
+                PollFd::new(shutdown_pipe.get_read_fd(), PollFlags::POLLIN),
+            ];
 
-        poll(&mut pollfd, PollTimeout::NONE).unwrap();
+            poll(&mut pollfd, PollTimeout::NONE).unwrap();
 
-        if !pollfd[1].revents().unwrap().is_empty() {
-            break;
-        }
+            if !pollfd[1].revents().unwrap().is_empty() {
+                break;
+            }
 
-        if !pollfd[0].revents().unwrap().is_empty() {
-            if let Some(x) = runtime.upgrade() {
-                x.loop_once();
-            } else {
-                // This might indicate runtime has shutdown BUT there race that
-                // this might be reached BEFORE the runtime init completed
-                // so this is no-op
+            if !pollfd[0].revents().unwrap().is_empty() {
+                if let Some(x) = runtime.upgrade() {
+                    x.loop_once();
+                } else {
+                    // This might indicate runtime has shutdown BUT there race that
+                    // this might be reached BEFORE the runtime init completed
+                    // so this is no-op
+                }
             }
         }
+    }));
+
+    if let Err(e) = ret {
+        if let Some(x) = runtime.upgrade() {
+            x.exit_looper();
+            x.worker_died(thread::current().id());
+        }
+        panic::resume_unwind(e);
     }
 
-    println!("Shutdown triggered, quiting...");
     if let Some(x) = runtime.upgrade() {
-        x.exit_looper()
+        x.exit_looper();
     }
 }
