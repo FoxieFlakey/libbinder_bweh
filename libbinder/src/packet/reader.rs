@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use either::Either;
 use libbinder_sys::types::{ObjectParsed, buffer::Buffer, reference::ObjectRefLocal};
 use thiserror::Error;
 
@@ -96,7 +97,7 @@ impl<'a> Reader<'a> {
 
             ObjectParsed::RemoteReference(remote) => Ok(Arc::new(B::new(Proxy {
                 rt: Arc::downgrade(self.runtime),
-                remote_ref: remote,
+                reference: Either::Right(remote),
             }))),
             _ => return Err(Error::InvalidObjectType),
         }

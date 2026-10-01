@@ -107,7 +107,10 @@ impl Writer {
         // Special handling if its remote
         if let Some(remote) = reference.get_remote() {
             remote
-                .remote_ref
+                .reference
+                .as_ref()
+                .right()
+                .expect("get_remote impls, return non remote proxy!")
                 .with_raw_bytes(|bytes| self.data.extend_from_slice(bytes))
         } else {
             let flags = reference.flags.into_flags();

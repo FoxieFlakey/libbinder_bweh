@@ -1,22 +1,38 @@
-// This proxies calls to the remote task
-
 use std::sync::{Arc, Weak};
 
+use either::Either;
 use libbinder_sys::types::reference::{ObjectRef, ObjectRefRemote};
 
 use crate::{
     Runtime,
-    object::{CallerIdentity, ObjectTrait},
+    object::{B, CallerIdentity, ObjectTrait},
 };
 
 pub struct Proxy {
     pub(crate) rt: Weak<Runtime>,
-    pub(crate) remote_ref: ObjectRefRemote,
+    pub(crate) reference: Either<Arc<B<dyn ObjectTrait>>, ObjectRefRemote>,
+}
+
+impl Proxy {
+    pub fn from_local(local: Arc<B<dyn ObjectTrait>>) -> Self {
+        Self {
+            rt: local.get_runtime().clone(),
+            reference: Either::Left(local),
+        }
+    }
 }
 
 impl ObjectTrait for Proxy {
     fn get_remote<'a>(&'a self) -> Option<&'a Proxy> {
-        Some(self)
+        if self.reference.is_right() {
+            None
+        } else {
+            Some(self)
+        }
+    }
+
+    fn get_runtime<'a>(&'a self) -> &'a Weak<Runtime> {
+        &self.rt
     }
 
     fn on_transaction(
@@ -32,11 +48,16 @@ impl ObjectTrait for Proxy {
             "Sending out to remote do not support setting caller identity"
         );
 
-        let rt: Arc<Runtime> = self
-            .rt
-            .upgrade()
-            .expect("Runtime is not alive anymore for Binder proxy");
-        rt.send_packet(code, flags, message, ObjectRef::Remote(self.remote_ref))
-            .expect("Cannot send transaction")
+        match &self.reference {
+            Either::Left(local) => local.on_transaction(code, flags, message, caller_identity),
+            Either::Right(x) => {
+                let rt: Arc<Runtime> = self
+                    .rt
+                    .upgrade()
+                    .expect("Runtime is not alive anymore for Binder proxy");
+                rt.send_packet(code, flags, message, ObjectRef::Remote(*x))
+                    .expect("Cannot send transaction")
+            }
+        }
     }
 }

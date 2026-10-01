@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, anyhow, bail};
+use either::Either;
 use enumflags2::BitFlags;
 use libbinder_sys::{
     commands::Command,
@@ -127,7 +128,7 @@ impl Runtime {
                 // service manager proxy
                 let mgr = builder(Proxy {
                     rt: Arc::downgrade(&rt),
-                    remote_ref: SERVICE_MANAGER,
+                    reference: Either::Right(SERVICE_MANAGER),
                 })?;
                 rt.add_object(mgr.clone());
                 mgr

@@ -21,6 +21,10 @@ impl ObjectTrait for Concrete {
         None
     }
 
+    fn get_runtime<'a>(&'a self) -> &'a Weak<Runtime> {
+        &self.0
+    }
+
     fn on_transaction(
         &self,
         code: u32,
