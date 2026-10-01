@@ -2,7 +2,10 @@ use anyhow::{Context, anyhow};
 use bytemuck::{Pod, Zeroable};
 use bytemuck_utils::PodData;
 
-use crate::types::reference::{ObjectRef, ObjectRefLocal, ObjectRefRaw, ObjectRefRemote};
+use crate::types::{
+    buffer::Buffer,
+    reference::{ObjectRef, ObjectRefLocal, ObjectRefRaw, ObjectRefRemote},
+};
 
 const TYPE_LARGE: u8 = 0x85;
 
@@ -22,6 +25,7 @@ pub(crate) const FD: u32 = pack_chars(b'f', b'd', b'*', TYPE_LARGE);
 pub(crate) const FDA: u32 = pack_chars(b'f', b'd', b'a', TYPE_LARGE);
 pub(crate) const PTR: u32 = pack_chars(b'p', b't', b'*', TYPE_LARGE);
 
+pub mod buffer;
 pub mod reference;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,6 +61,7 @@ impl Type {
         match self {
             Type::LocalReference => size_of::<ObjectRefRaw>(),
             Type::RemoteReference => size_of::<ObjectRefRaw>(),
+            Type::ByteBuffer => buffer::Buffer::size_for_raw(),
 
             _ => todo!(),
         }
@@ -88,10 +93,16 @@ pub(crate) struct ObjectHeaderRaw {
 pub enum ObjectParsed {
     LocalReference(ObjectRefLocal),
     RemoteReference(ObjectRefRemote),
+    ByteBuffer(buffer::Buffer<'static>),
 }
 
 impl ObjectParsed {
-    pub fn try_from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+    // # Safety
+    // Caller must ensure if there pointers in here
+    // it has to be valid and any objects with lifetime
+    // is 'static because limitation, its caller responsiblity
+    // to anchor it something safer!
+    pub unsafe fn try_from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let ty = Type::try_from_bytes(&bytes[..size_of::<ObjectHeaderRaw>()])
             .context("Cannot get type")?;
         Ok(match ty {
@@ -121,7 +132,12 @@ impl ObjectParsed {
             Type::WeakLocalReference => todo!(),
             Type::FileDescriptor => todo!(),
             Type::FileDescriptorArray => todo!(),
-            Type::ByteBuffer => todo!(),
+            Type::ByteBuffer => {
+                let payload = &bytes[..ty.type_size_with_header()];
+                // SAFETY: Caller ensure that pointer in byte buffer is valid if its
+                // byte buffer
+                ObjectParsed::ByteBuffer(unsafe { Buffer::try_from_bytes(payload)? })
+            }
         })
     }
 }

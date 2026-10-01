@@ -23,6 +23,8 @@ pub enum Error {
     AttemptingToReadBinderObjectOnWrongOffset,
     #[error("Out of bound while reading")]
     OutOfBound,
+    #[error("Invalid object type")]
+    InvalidObjectType,
 }
 
 impl<'a> Reader<'a> {
@@ -63,7 +65,11 @@ impl<'a> Reader<'a> {
             return Err(Error::AttemptingToReadBinderObjectOnWrongOffset);
         }
 
-        match ObjectParsed::try_from_bytes(&self.data).expect("expecting data is valid") {
+        // SAFETY: The data that came to packet is closely
+        // controlled to be only contain valid object with valid
+        // pointers
+        match unsafe { ObjectParsed::try_from_bytes(&self.data) }.expect("expecting data is valid")
+        {
             ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => {
                 Ok(self.runtime.local_objects.get(data).unwrap().clone())
             }
@@ -72,6 +78,7 @@ impl<'a> Reader<'a> {
                 rt: Arc::downgrade(self.runtime),
                 remote_ref: remote,
             }))),
+            _ => return Err(Error::InvalidObjectType),
         }
     }
 }

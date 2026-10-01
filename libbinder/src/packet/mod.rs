@@ -130,6 +130,8 @@ impl Packet {
                     .has_strong = true;
             }
             ObjectParsed::RemoteReference(_) => (),
+            // Other thing dont matter
+            _ => (),
         });
         self.is_sent = true;
     }
@@ -140,7 +142,9 @@ where
     F: FnMut(ObjectParsed),
 {
     for &offset in offsets {
-        let ty = ObjectParsed::try_from_bytes(&data[offset..]).expect("expecting data is valid");
+        // SAFETY: nah we own it safe
+        let ty = unsafe { ObjectParsed::try_from_bytes(&data[offset..]) }
+            .expect("expecting data is valid");
         func(ty)
     }
 }
@@ -164,5 +168,7 @@ fn drop_objects(runtime: &Arc<Runtime>, data: &[u8], offsets: &[usize]) {
             );
         }
         ObjectParsed::RemoteReference(_) => (),
+        // Packet dont own the references here... the caller does
+        ObjectParsed::ByteBuffer(_) => (),
     });
 }
