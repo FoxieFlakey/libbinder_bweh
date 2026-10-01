@@ -4,7 +4,10 @@ use bytemuck_utils::PodData;
 use nix::{request_code_none, request_code_read, request_code_write};
 use num_enum::{TryFromPrimitive, TryFromPrimitiveError};
 
-use crate::{BinderUsize, transaction::TransactionDataRaw};
+use crate::{
+    BinderUsize,
+    transaction::{TransactionDataRaw, TransactionDataSecctxRaw},
+};
 
 const BINDER_CMD_MAGIC: u8 = b'c';
 
@@ -56,6 +59,8 @@ pub enum ReturnVal {
     Error = request_code_read!(BINDER_RET_MAGIC, 0, size_of::<i32>()),
     Ok = request_code_none!(BINDER_RET_MAGIC, 1),
     Transaction = request_code_read!(BINDER_RET_MAGIC, 2, size_of::<TransactionDataRaw>()),
+    TransactionSecctx =
+        request_code_read!(BINDER_RET_MAGIC, 2, size_of::<TransactionDataSecctxRaw>()),
     Reply = request_code_read!(BINDER_RET_MAGIC, 3, size_of::<TransactionDataRaw>()),
     DeadReply = request_code_none!(BINDER_RET_MAGIC, 5),
     TransactionComplete = request_code_none!(BINDER_RET_MAGIC, 6),
