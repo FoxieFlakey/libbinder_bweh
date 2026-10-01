@@ -1,7 +1,10 @@
 use std::sync::{Arc, Weak};
 
 use either::Either;
-use libbinder_sys::types::reference::{ObjectRef, ObjectRefRemote};
+use libbinder_sys::{
+    commands::Command,
+    types::reference::{ObjectRef, ObjectRefRemote},
+};
 
 use crate::{
     Runtime,
@@ -13,11 +16,50 @@ pub struct Proxy {
     pub(crate) reference: Either<Arc<B<dyn ObjectTrait>>, ObjectRefRemote>,
 }
 
+impl Drop for Proxy {
+    fn drop(&mut self) {
+        let Some(rt) = self.rt.upgrade() else {
+            return;
+        };
+
+        if let Either::Right(x) = &self.reference {
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&Command::Release.as_bytes());
+            buf.extend_from_slice(&x.data_handle.to_ne_bytes());
+            buf.extend_from_slice(&(0usize).to_ne_bytes());
+            rt.do_read_write(&buf, &mut [])
+                .expect("Cannot send BC_RELEASE for local reference");
+        }
+    }
+}
+
 impl Proxy {
-    pub fn from_local(local: Arc<B<dyn ObjectTrait>>) -> Self {
-        Self {
-            rt: local.get_runtime().clone(),
-            reference: Either::Left(local),
+    pub fn from_object(local: Arc<B<dyn ObjectTrait>>) -> Self {
+        match local.get_remote() {
+            Some(proxy) => Self {
+                rt: local.get_runtime().clone(),
+                reference: Either::Right(
+                    *proxy
+                        .reference
+                        .as_ref()
+                        .right()
+                        .inspect(|remote_ref| {
+                            // We need to notify kernel that the local reference is cloned
+                            let rt = proxy.rt.upgrade().unwrap();
+                            let mut buf = Vec::new();
+                            buf.extend_from_slice(&Command::Release.as_bytes());
+                            buf.extend_from_slice(&remote_ref.data_handle.to_ne_bytes());
+                            buf.extend_from_slice(&(0usize).to_ne_bytes());
+                            rt.do_read_write(&buf, &mut [])
+                                .expect("Cannot send BC_RELEASE for local reference");
+                        })
+                        .expect(".get_remote returns non remote reference!"),
+                ),
+            },
+            None => Self {
+                rt: local.get_runtime().clone(),
+                reference: Either::Left(local),
+            },
         }
     }
 }
