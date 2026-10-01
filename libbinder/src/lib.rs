@@ -482,8 +482,10 @@ impl Runtime {
         let read_bytes = self
             .do_read_write(&[], &mut read_buf)
             .expect("Cannot read incoming transactions");
-        self.handle_ret_values(unsafe { RetIterator::new(&read_buf[..read_bytes]) }, |_| {
-            unreachable!("Unexpected")
+        self.handle_ret_values(unsafe { RetIterator::new(&read_buf[..read_bytes]) }, |x| {
+            if !matches!(x, RetVal::TransactionComplete) {
+                unreachable!("Unexpected")
+            }
         });
     }
 
