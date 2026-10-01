@@ -1,10 +1,9 @@
-#![feature(oneshot_channel)]
-
 use std::{
+    collections::HashMap,
     os::fd::{AsFd, OwnedFd},
     path::Path,
-    sync::{Arc, OnceLock, Weak, oneshot},
-    thread::{self, JoinHandle},
+    sync::{Arc, Mutex, OnceLock, Weak},
+    thread::{self, JoinHandle, ThreadId},
 };
 
 use anyhow::{Context, anyhow, bail};
@@ -48,7 +47,7 @@ pub use test::lib_main;
 pub struct Runtime {
     binder_dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
-    join_handle: JoinHandle<()>,
+    threads: Mutex<HashMap<ThreadId, JoinHandle<()>>>,
     manager: OnceLock<Arc<B<dyn ObjectTrait>>>,
     local_objects: Slab<Arc<B<dyn ObjectTrait>>>,
     _mmap: Mmap,
@@ -57,8 +56,10 @@ pub struct Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         self.shutdown_pipe.write_blocking(true).unwrap();
-        if self.join_handle.thread().id() == thread::current().id() {
-            return;
+        for (_, join_handle) in self.threads.get_mut().unwrap().drain() {
+            if join_handle.thread().id() == thread::current().id() {
+                return;
+            }
         }
     }
 }
@@ -88,21 +89,18 @@ impl Runtime {
         let shutdown_pipe = Arc::new(Pipe::new().context("Creating shutdown pipe")?);
         let mmap = Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
             .context("Trying to map buffer for binder")?;
-        let (init_done_send, init_done_recv) = oneshot::channel();
-        let rt = Arc::new_cyclic(|weak| {
-            let weak = weak.clone();
-            let dev = dev.clone();
-            Self {
-                _mmap: mmap,
-                binder_dev: dev.clone(),
-                shutdown_pipe: shutdown_pipe.clone(),
-                manager: OnceLock::new(),
-                join_handle: thread::spawn(move || {
-                    worker(dev, shutdown_pipe, init_done_recv, weak.clone(), false)
-                }),
-                local_objects: Slab::new(),
-            }
+        let rt = Arc::new(Self {
+            _mmap: mmap,
+            binder_dev: dev.clone(),
+            shutdown_pipe: shutdown_pipe.clone(),
+            manager: OnceLock::new(),
+            threads: Mutex::new(HashMap::new()),
+            local_objects: Slab::new(),
         });
+
+        // Context manager may want to perform calls to remote too
+        // and remote may calls back
+        rt.spawn_looper(false);
 
         let mgr = match context_manager {
             ContextManagerInfo::Concrete(manager) => {
@@ -135,7 +133,6 @@ impl Runtime {
         };
         rt.manager.set(mgr).ok().unwrap();
 
-        init_done_send.send(()).unwrap();
         Ok(rt)
     }
 
@@ -157,6 +154,21 @@ impl Runtime {
         }
 
         id
+    }
+
+    fn spawn_looper(self: &Arc<Runtime>, is_spawned_by_kernel: bool) {
+        let dev = self.binder_dev.clone();
+        let shutdown_pipe = self.shutdown_pipe.clone();
+        let rt = Arc::downgrade(self);
+        let handle = thread::spawn(move || worker(dev, shutdown_pipe, rt, is_spawned_by_kernel));
+        assert!(
+            self.threads
+                .lock()
+                .unwrap()
+                .insert(handle.thread().id(), handle)
+                .is_none(),
+            "Must not exist already"
+        );
     }
 
     pub(crate) fn do_read_write(
@@ -475,12 +487,9 @@ impl Runtime {
 fn worker(
     dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
-    init_done: oneshot::Receiver<()>,
     runtime: Weak<Runtime>,
     is_spawned_by_kernel: bool,
 ) {
-    init_done.recv().unwrap();
-
     if is_spawned_by_kernel {
         runtime.upgrade().unwrap().register_looper();
     } else {
