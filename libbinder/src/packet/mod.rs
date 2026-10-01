@@ -28,6 +28,7 @@ use crate::{Runtime, packet::reader::Reader};
 struct Owned {
     data: Vec<u8>,
     offsets: Vec<usize>,
+    byte_bufs: Vec<Box<dyn AsRef<[u8]>>>,
 }
 
 pub struct Packet {
@@ -108,7 +109,8 @@ impl Packet {
 
         owned.data.clear();
         owned.offsets.clear();
-        Writer::new_recycled(runtime, owned.data, owned.offsets)
+        owned.byte_bufs.clear();
+        Writer::new_recycled(runtime, owned.data, owned.offsets, owned.byte_bufs)
     }
 
     // Appropriately does needed strong count increments

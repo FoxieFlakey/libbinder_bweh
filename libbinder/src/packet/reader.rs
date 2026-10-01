@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use libbinder_sys::types::{ObjectParsed, reference::ObjectRefLocal};
+use libbinder_sys::types::{ObjectParsed, buffer::Buffer, reference::ObjectRefLocal};
 use thiserror::Error;
 
 use crate::{
@@ -53,6 +53,26 @@ impl<'a> Reader<'a> {
             }
         }
         Ok(())
+    }
+
+    pub fn read_buf(&mut self) -> Result<Buffer<'a>, Error> {
+        if self.current_offset
+            != *self
+                .offsets
+                .first()
+                .ok_or(Error::AttemptingToReadBinderObjectOnWrongOffset)?
+        {
+            return Err(Error::AttemptingToReadBinderObjectOnWrongOffset);
+        }
+
+        // SAFETY: The data that came to packet is closely
+        // controlled to be only contain valid object with valid
+        // pointers
+        match unsafe { ObjectParsed::try_from_bytes(&self.data) }.expect("expecting data is valid")
+        {
+            ObjectParsed::ByteBuffer(buf) => Ok(buf),
+            _ => return Err(Error::InvalidObjectType),
+        }
     }
 
     pub fn read_reference(&mut self) -> Result<Arc<B<dyn ObjectTrait>>, Error> {

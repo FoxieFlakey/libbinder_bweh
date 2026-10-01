@@ -1,7 +1,7 @@
 use std::{mem, sync::Arc};
 
 use either::Either;
-use libbinder_sys::types::reference::ObjectRefLocal;
+use libbinder_sys::types::{buffer::Buffer, reference::ObjectRefLocal};
 
 use crate::{
     Runtime,
@@ -13,6 +13,7 @@ pub struct Writer {
     runtime: Arc<Runtime>,
     data: Vec<u8>,
     offsets: Vec<usize>,
+    byte_bufs: Vec<Box<dyn AsRef<[u8]>>>,
 }
 
 impl Drop for Writer {
@@ -27,16 +28,24 @@ impl Writer {
             runtime,
             data: Vec::new(),
             offsets: Vec::new(),
+            byte_bufs: Vec::new(),
         }
     }
 
-    pub fn new_recycled(runtime: Arc<Runtime>, mut data: Vec<u8>, mut offsets: Vec<usize>) -> Self {
+    pub fn new_recycled(
+        runtime: Arc<Runtime>,
+        mut data: Vec<u8>,
+        mut offsets: Vec<usize>,
+        mut byte_bufs: Vec<Box<dyn AsRef<[u8]>>>,
+    ) -> Self {
         data.clear();
         offsets.clear();
+        byte_bufs.clear();
         Self {
             runtime,
             data,
             offsets,
+            byte_bufs,
         }
     }
 
@@ -60,6 +69,7 @@ impl Writer {
             inner: Either::Left(Owned {
                 data: mem::take(&mut self.data),
                 offsets: mem::take(&mut self.offsets),
+                byte_bufs: mem::take(&mut self.byte_bufs),
             }),
         }
     }
@@ -69,6 +79,21 @@ impl Writer {
         T: AsRef<[u8]>,
     {
         self.data.extend_from_slice(bytes.as_ref());
+    }
+
+    pub fn write_buf<T: AsRef<[u8]> + 'static>(&mut self, bytes: T) {
+        assert!(
+            self.data.len().is_multiple_of(4),
+            "Binder objects must be at offset of multiple of four"
+        );
+
+        let raw = Buffer {
+            buffer: bytes.as_ref(),
+            parent: None,
+        };
+
+        raw.with_raw_bytes(|bytes| self.data.extend_from_slice(bytes));
+        self.byte_bufs.push(Box::new(bytes));
     }
 
     pub fn write_reference(&mut self, reference: Arc<B<dyn ObjectTrait>>) {
