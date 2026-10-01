@@ -58,8 +58,11 @@ impl Drop for Runtime {
         self.shutdown_pipe.write_blocking(true).unwrap();
         for (_, join_handle) in self.threads.get_mut().unwrap().drain() {
             if join_handle.thread().id() == thread::current().id() {
-                return;
+                // dont wait on ourself
+                continue;
             }
+
+            join_handle.join().unwrap();
         }
     }
 }
@@ -159,7 +162,7 @@ impl Runtime {
     fn spawn_looper(self: &Arc<Runtime>, is_spawned_by_kernel: bool) {
         let dev = self.binder_dev.clone();
         let shutdown_pipe = self.shutdown_pipe.clone();
-        let rt = Arc::downgrade(self);
+        let rt = self.clone();
         let handle = thread::spawn(move || worker(dev, shutdown_pipe, rt, is_spawned_by_kernel));
         assert!(
             self.threads
@@ -487,14 +490,15 @@ impl Runtime {
 fn worker(
     dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
-    runtime: Weak<Runtime>,
+    runtime: Arc<Runtime>,
     is_spawned_by_kernel: bool,
 ) {
     if is_spawned_by_kernel {
-        runtime.upgrade().unwrap().register_looper();
+        runtime.register_looper();
     } else {
-        runtime.upgrade().unwrap().enter_looper();
+        runtime.enter_looper();
     }
+    let runtime = Arc::downgrade(&runtime);
 
     loop {
         let mut pollfd = [
