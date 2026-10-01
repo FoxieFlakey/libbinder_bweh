@@ -362,7 +362,6 @@ impl Runtime {
             return;
         }
 
-        println!("Sending reply");
         let mut write_buf = Vec::new();
         write_buf.extend_from_slice(&Command::SendReply.as_bytes());
         let transaction = Transaction::NotKernelManaged(TransactionNotKernelMananged {
@@ -398,11 +397,9 @@ impl Runtime {
                 }
                 return_parser::RetVal::DeadBinder(_) => (),
                 return_parser::RetVal::SpawnLooper => {
-                    println!("Kernel requested a looper");
                     self.spawn_looper(true);
                 }
                 return_parser::RetVal::AcquireStrong(ObjectRefLocal { data, .. }) => {
-                    println!("acquire strong {data}");
                     let meta = self
                         .local_objects
                         .get(data)
@@ -417,7 +414,6 @@ impl Runtime {
                         .expect("Cannot send BC_ACQUIRE_DONE");
                 }
                 return_parser::RetVal::ReleaseStrong(ObjectRefLocal { data, .. }) => {
-                    println!("release strong {data}");
                     let meta = self
                         .local_objects
                         .get(data)
@@ -438,7 +434,6 @@ impl Runtime {
                     }
                 }
                 return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
-                    println!("acquire weak {data}");
                     let meta = self
                         .local_objects
                         .get(data)
@@ -452,7 +447,6 @@ impl Runtime {
                         .expect("Cannot send BC_INCREFS_DONE");
                 }
                 return_parser::RetVal::ReleaseWeak(ObjectRefLocal { data, .. }) => {
-                    println!("release weak {data}");
                     let meta = self
                         .local_objects
                         .get(data)
