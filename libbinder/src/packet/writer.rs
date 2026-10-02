@@ -1,7 +1,14 @@
-use std::{mem, sync::Arc};
+use std::{
+    mem,
+    os::fd::{AsFd, BorrowedFd},
+    sync::Arc,
+};
 
+use aligned_vec::AVec;
+use anyhow::{Context, anyhow};
 use either::Either;
-use libbinder_sys::types::{buffer::Buffer, reference::ObjectRefLocal};
+use libbinder_sys::types::{buffer::Buffer, fd, reference::ObjectRefLocal};
+use nix::fcntl::FdFlag;
 
 use crate::{
     Runtime,
@@ -92,24 +99,67 @@ impl Writer {
         self.data.extend_from_slice(bytes.as_ref());
     }
 
+    pub fn write_fd(&mut self, fd: BorrowedFd<'_>) -> anyhow::Result<()> {
+        assert!(
+            self.data.len().is_multiple_of(4),
+            "Binder objects must be at offset of multiple of four"
+        );
+        let offset = self.data.len();
+        let new_fd = nix::unistd::dup(fd).context("Duping an FD")?;
+
+        let mut flags = FdFlag::from_bits(
+            nix::fcntl::fcntl(new_fd.as_fd(), nix::fcntl::F_GETFD).context("Getting FD flags")?,
+        )
+        .ok_or(anyhow!("Cannot create FdFlag"))?;
+        flags |= FdFlag::FD_CLOEXEC;
+        nix::fcntl::fcntl(new_fd.as_fd(), nix::fcntl::F_SETFD(flags))
+            .context("Setting FD flags to have O_CLOEXEC")?;
+
+        fd::with_raw_bytes(new_fd.as_fd(), |x| self.data.extend_from_slice(x));
+        self.offsets.push(offset);
+
+        // The fd will be dropped later in Drop code of Writer
+        // when parses the offset for object need cleanups
+        mem::forget(new_fd);
+        Ok(())
+    }
+
     pub fn write_buf<T: AsRef<[u8]> + 'static>(&mut self, bytes: T) {
         assert!(
             self.data.len().is_multiple_of(4),
             "Binder objects must be at offset of multiple of four"
         );
-        if !bytes.as_ref().len().is_multiple_of(size_of::<u64>()) {
-            todo!(
-                "Maybe bounce buffers and a warning or smth. kernel requires it aligned to 8 bytes"
-            )
-        }
-
-        let raw = Buffer {
-            buffer: bytes.as_ref(),
-            parent: None,
+        let boxed;
+        let addr = bytes.as_ref().as_ptr().addr();
+        let raw = if !addr.is_multiple_of(size_of::<u64>()) {
+            // Unaligned &[u8] was given, make it aligned
+            let bytes = bytes.as_ref();
+            let mut aligned: AVec<u8> = AVec::with_capacity(size_of::<u64>(), bytes.len());
+            aligned.extend_from_slice(bytes);
+            boxed = Box::new(aligned) as Box<dyn AsRef<[u8]>>;
+            Buffer {
+                buffer: boxed.as_ref().as_ref(),
+                parent: None,
+            }
+        } else {
+            boxed = Box::new(bytes) as Box<dyn AsRef<[u8]>>;
+            assert_eq!(
+                boxed.as_ref().as_ref().as_ptr().addr(),
+                addr,
+                "as_ref changes value between 2 calls?? should not happen"
+            );
+            Buffer {
+                buffer: boxed.as_ref().as_ref(),
+                parent: None,
+            }
         };
 
+        let offset = self.data.len();
+
         raw.with_raw_bytes(|bytes| self.data.extend_from_slice(bytes));
-        self.byte_bufs.push(Box::new(bytes));
+        self.buffers_size += raw.buffer.len();
+        self.byte_bufs.push(boxed);
+        self.offsets.push(offset);
     }
 
     pub fn write_reference(&mut self, reference: Arc<B<dyn ObjectTrait>>) {
@@ -117,8 +167,7 @@ impl Writer {
             self.data.len().is_multiple_of(4),
             "Binder objects must be at offset of multiple of four"
         );
-
-        self.offsets.push(self.data.len());
+        let offset = self.data.len();
 
         // Special handling if its remote
         if let Some(remote) = reference.get_remote() {
@@ -145,5 +194,7 @@ impl Writer {
 
             raw.with_raw_bytes_and_flag(flags, |bytes| self.data.extend_from_slice(bytes))
         }
+
+        self.offsets.push(offset);
     }
 }

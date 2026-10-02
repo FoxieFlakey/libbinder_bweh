@@ -1,5 +1,6 @@
 mod app;
 mod calculator;
+mod file_server;
 mod implementation;
 mod interface;
 mod once_event;
@@ -15,6 +16,7 @@ pub fn main() {
         Some("app") => app::main(),
         Some("service_manager") => service_manager::main(),
         Some("calculator") => calculator::main(),
+        Some("file_server") => file_server::main(),
         Some(x) => eprintln!("Unknown mode: {x}"),
         None => eprintln!("Mode has to be provided"),
     }

@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, bail};
 use bytemuck::{Pod, Zeroable};
 use bytemuck_utils::PodData;
 use enumflags2::{BitFlag, BitFlags, bitflags};
@@ -70,7 +70,7 @@ impl ObjectRef {
                 extra_local_data: raw.extra_data,
             })),
 
-            _ => panic!("ObjectRef only need to handle BINDER and HANDLE nothing else"),
+            _ => bail!("Invalid type passed for try_from_bytes"),
         }
     }
 

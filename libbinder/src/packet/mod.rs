@@ -6,7 +6,12 @@
 mod reader;
 mod writer;
 
-use std::{mem::ManuallyDrop, os::fd::AsFd, ptr, sync::Arc};
+use std::{
+    mem::{self, ManuallyDrop},
+    os::fd::AsFd,
+    ptr,
+    sync::Arc,
+};
 
 use anyhow::anyhow;
 use either::Either;
@@ -58,6 +63,8 @@ impl Packet {
             |obj| match obj {
                 ObjectParsed::LocalReference(_) => (),
                 ObjectParsed::RemoteReference(_) => (),
+                // We, dont want to drop the FD yet
+                ObjectParsed::Fd(fd) => mem::forget(fd),
                 ObjectParsed::ByteBuffer(buffer) => buffers_size += buffer.buffer.len(),
             },
         );
@@ -187,6 +194,8 @@ fn drop_objects(runtime: &Arc<Runtime>, data: &[u8], offsets: &[usize]) {
                 "Kernel pull reference form nowhere :<"
             );
         }
+        // Just let the Fd drops
+        ObjectParsed::Fd(_) => (),
         ObjectParsed::RemoteReference(x) => runtime.dec_remote_ref(&x),
         // Packet has the Rust owned, so it handles the dropping of buffers themselves
         ObjectParsed::ByteBuffer(_) => (),

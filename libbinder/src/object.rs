@@ -41,6 +41,7 @@ pub enum Flag {
     OneWay,
     // Clears all data associated with this parcel on the receiving
     ClearBufs,
+    AcceptFd,
 }
 
 impl Flag {
@@ -53,6 +54,11 @@ impl Flag {
         if raw.contains(Flag::ClearBufs) {
             ret |= TransactionFlag::ClearBuffer;
         }
+
+        if raw.contains(Flag::AcceptFd) {
+            ret |= TransactionFlag::AcceptFds;
+        }
+
         ret
     }
 
@@ -65,6 +71,11 @@ impl Flag {
         if raw.contains(TransactionFlag::ClearBuffer) {
             ret |= Flag::ClearBufs;
         }
+
+        if raw.contains(TransactionFlag::AcceptFds) {
+            ret |= Flag::AcceptFd;
+        }
+
         ret
     }
 }

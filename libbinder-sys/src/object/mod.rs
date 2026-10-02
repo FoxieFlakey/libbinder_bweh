@@ -1,3 +1,5 @@
+use std::os::fd::OwnedFd;
+
 use anyhow::{Context, anyhow};
 use bytemuck::{Pod, Zeroable};
 use bytemuck_utils::PodData;
@@ -26,6 +28,7 @@ pub(crate) const FDA: u32 = pack_chars(b'f', b'd', b'a', TYPE_LARGE);
 pub(crate) const PTR: u32 = pack_chars(b'p', b't', b'*', TYPE_LARGE);
 
 pub mod buffer;
+pub mod fd;
 pub mod reference;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -62,6 +65,7 @@ impl Type {
             Type::LocalReference => size_of::<ObjectRefRaw>(),
             Type::RemoteReference => size_of::<ObjectRefRaw>(),
             Type::ByteBuffer => buffer::Buffer::size_for_raw(),
+            Type::FileDescriptor => fd::size_for_raw(),
 
             _ => todo!(),
         }
@@ -94,6 +98,7 @@ pub enum ObjectParsed {
     LocalReference(ObjectRefLocal),
     RemoteReference(ObjectRefRemote),
     ByteBuffer(buffer::Buffer<'static>),
+    Fd(OwnedFd),
 }
 
 impl ObjectParsed {
@@ -102,6 +107,8 @@ impl ObjectParsed {
     // it has to be valid and any objects with lifetime
     // is 'static because limitation, its caller responsiblity
     // to anchor it something safer!
+    // Also has to ensure only try_from_bytes on single instance
+    // of bytes. Some object takes exclusive ownership of FD and such
     pub unsafe fn try_from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let ty = Type::try_from_bytes(&bytes[..size_of::<ObjectHeaderRaw>()])
             .context("Cannot get type")?;
@@ -130,7 +137,10 @@ impl ObjectParsed {
             }
             Type::WeakRemoteReference => todo!(),
             Type::WeakLocalReference => todo!(),
-            Type::FileDescriptor => todo!(),
+            Type::FileDescriptor => {
+                let payload = &bytes[..ty.type_size_with_header()];
+                ObjectParsed::Fd(fd::try_from_bytes(payload).context("Cannot parse FD object")?)
+            }
             Type::FileDescriptorArray => todo!(),
             Type::ByteBuffer => {
                 let payload = &bytes[..ty.type_size_with_header()];

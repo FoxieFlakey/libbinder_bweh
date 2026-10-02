@@ -61,8 +61,9 @@ impl<'a> Buffer<'a> {
     // caller must ensure the buffer raw, contains valid pointer
     // such as from kernel, which is guarantee to be valid
     pub(crate) unsafe fn try_from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        let header = PodData::<ObjectHeaderRaw>::try_from_bytes(bytes)
-            .context("Converting to raw object header")?;
+        let header =
+            PodData::<ObjectHeaderRaw>::try_from_bytes(&bytes[..size_of::<ObjectHeaderRaw>()])
+                .context("Converting to raw object header")?;
         if header.kind != object::PTR {
             bail!("Incorrect type passed for try_from_bytes")
         }
