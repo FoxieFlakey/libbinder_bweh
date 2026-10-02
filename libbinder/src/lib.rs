@@ -131,12 +131,10 @@ impl Runtime {
             ContextManagerInfo::Remote(builder) => {
                 // We become client, here would be creating local
                 // service manager proxy
-                let mgr = builder(Proxy {
+                builder(Proxy {
                     rt: Arc::downgrade(&rt),
                     reference: Either::Right(SERVICE_MANAGER),
-                })?;
-                rt.add_object(mgr.clone());
-                mgr
+                })?
             }
         };
         rt.manager.set(mgr).ok().unwrap();
@@ -230,7 +228,7 @@ impl Runtime {
         code: u32,
         flags: BitFlags<object::Flag>,
         packet: &mut Packet,
-        target: ObjectRef,
+        target: ObjectRefRemote,
     ) -> anyhow::Result<Option<(u32, Packet)>> {
         let flags_out = object::Flag::into_raw(flags);
         let is_one_way = flags.contains(object::Flag::OneWay);
@@ -241,7 +239,7 @@ impl Runtime {
                 data_slice: &packet.get_data(),
                 flags: flags_out,
                 offsets: &packet.get_offsets(),
-                target,
+                target: ObjectRef::Remote(target),
                 secctx: None,
                 sender_euid: 0,
                 sender_pid: 0,
@@ -253,24 +251,18 @@ impl Runtime {
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
         self.do_read_write(&write_buf, &mut [])
             .context("Cannot send packet")?;
+        unsafe { packet.objects_sent() };
+        drop(write_buf);
 
         let mut ret_buf = [0; READ_BUF_SIZE];
         let mut reply = None;
         let mut is_completed = false;
-        let mut is_first_time = true;
 
         loop {
             let bytes_read = self
                 .do_read_write(&[], &mut ret_buf)
                 .context("Cannot wait for reply/transaction complete")?;
             let read = &ret_buf[0..bytes_read];
-
-            if is_first_time {
-                // SAFETY: The packet did succesfully sent out
-                unsafe { packet.objects_sent() };
-                write_buf.clear();
-                is_first_time = false;
-            }
 
             // SAFETY: Kernel jsut wrote it
             let mut err = None;
@@ -389,9 +381,7 @@ impl Runtime {
             panic!("Attempting to handle transaction on object that was already removed")
         }
 
-        let (reply_code, reply) = meta
-            .on_transaction(code, flags, &mut packet)
-            .expect("Cannot perform transaction");
+        let ret = meta.on_transaction(code, flags, &mut packet);
         drop(packet);
 
         self.pop_identity();
@@ -400,6 +390,10 @@ impl Runtime {
             // no need to handle replying
             return;
         }
+
+        let Some((reply_code, reply)) = ret else {
+            panic!("This is non oneway transaction but reply is not provided");
+        };
 
         let mut write_buf = Vec::new();
         write_buf.extend_from_slice(&Command::SendReply.as_bytes());
@@ -421,6 +415,22 @@ impl Runtime {
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
         self.do_read_write(&write_buf, &mut [])
             .expect("Cannot send reply");
+    }
+
+    fn inc_remote_ref(&self, remote: &ObjectRefRemote) {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&Command::Acquire.as_bytes());
+        buf.extend_from_slice(&remote.data_handle.to_ne_bytes());
+        self.do_read_write(&buf, &mut [])
+            .expect("Cannot send BC_ACQUIRE for remote reference");
+    }
+
+    fn dec_remote_ref(&self, remote: &ObjectRefRemote) {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&Command::Release.as_bytes());
+        buf.extend_from_slice(&remote.data_handle.to_ne_bytes());
+        self.do_read_write(&buf, &mut [])
+            .expect("Cannot send BC_RELEASE for remote reference");
     }
 
     fn handle_ret_values<F>(self: &Arc<Runtime>, ret_iterator: RetIterator<'_>, mut handler: F)

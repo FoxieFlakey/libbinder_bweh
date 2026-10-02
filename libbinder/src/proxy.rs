@@ -1,10 +1,7 @@
 use std::sync::{Arc, Weak};
 
 use either::Either;
-use libbinder_sys::{
-    commands::Command,
-    types::reference::{ObjectRef, ObjectRefRemote},
-};
+use libbinder_sys::types::reference::ObjectRefRemote;
 
 use crate::{
     Runtime,
@@ -23,11 +20,7 @@ impl Drop for Proxy {
         };
 
         if let Either::Right(x) = &self.reference {
-            let mut buf = Vec::new();
-            buf.extend_from_slice(&Command::Release.as_bytes());
-            buf.extend_from_slice(&x.data_handle.to_ne_bytes());
-            rt.do_read_write(&buf, &mut [])
-                .expect("Cannot send BC_RELEASE for remote reference");
+            rt.dec_remote_ref(x);
         }
     }
 }
@@ -44,12 +37,7 @@ impl Proxy {
                         .right()
                         .inspect(|remote_ref| {
                             // We need to notify kernel that the local reference is cloned
-                            let rt = proxy.rt.upgrade().unwrap();
-                            let mut buf = Vec::new();
-                            buf.extend_from_slice(&Command::Release.as_bytes());
-                            buf.extend_from_slice(&remote_ref.data_handle.to_ne_bytes());
-                            rt.do_read_write(&buf, &mut [])
-                                .expect("Cannot send BC_RELEASE for remote reference");
+                            proxy.rt.upgrade().unwrap().inc_remote_ref(*remote_ref);
                         })
                         .expect(".get_remote returns non remote reference!"),
                 ),
@@ -88,7 +76,7 @@ impl ObjectTrait for Proxy {
                     .rt
                     .upgrade()
                     .expect("Runtime is not alive anymore for Binder proxy");
-                rt.send_packet(code, flags, message, ObjectRef::Remote(*x))
+                rt.send_packet(code, flags, message, *x)
                     .expect("Cannot send transaction")
             }
         }

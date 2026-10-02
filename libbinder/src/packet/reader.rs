@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use either::Either;
-use libbinder_sys::types::{ObjectParsed, buffer::Buffer, reference::ObjectRefLocal};
+use libbinder_sys::types::{
+    ObjectParsed,
+    buffer::Buffer,
+    reference::{ObjectRef, ObjectRefLocal},
+};
 use thiserror::Error;
 
-use crate::{
-    Runtime,
-    object::{B, ObjectTrait},
-    packet::Packet,
-    proxy::Proxy,
-};
+use crate::{Runtime, packet::Packet, proxy::Proxy};
 
 pub struct Reader<'a> {
     runtime: &'a Arc<Runtime>,
@@ -56,6 +55,10 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
+    pub fn get_rest_of_data(&self) -> &'a [u8] {
+        &self.data[self.current_offset..]
+    }
+
     pub fn read_buf(&mut self) -> Result<Buffer<'a>, Error> {
         if self.current_offset
             != *self
@@ -71,12 +74,15 @@ impl<'a> Reader<'a> {
         // pointers
         match unsafe { ObjectParsed::try_from_bytes(&self.data) }.expect("expecting data is valid")
         {
-            ObjectParsed::ByteBuffer(buf) => Ok(buf),
+            ObjectParsed::ByteBuffer(buf) => {
+                self.current_offset += Buffer::size_for_raw();
+                Ok(buf)
+            }
             _ => return Err(Error::InvalidObjectType),
         }
     }
 
-    pub fn read_reference(&mut self) -> Result<Arc<B<dyn ObjectTrait>>, Error> {
+    pub fn read_reference(&mut self) -> Result<Proxy, Error> {
         if self.current_offset
             != *self
                 .offsets
@@ -92,13 +98,20 @@ impl<'a> Reader<'a> {
         match unsafe { ObjectParsed::try_from_bytes(&self.data) }.expect("expecting data is valid")
         {
             ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => {
-                Ok(self.runtime.local_objects.get(data).unwrap().clone())
+                self.current_offset += ObjectRef::size_in_bytes_for_raw();
+                Ok(Proxy::from_object(
+                    self.runtime.local_objects.get(data).unwrap().clone(),
+                ))
             }
 
-            ObjectParsed::RemoteReference(remote) => Ok(Arc::new(B::new(Proxy {
-                rt: Arc::downgrade(self.runtime),
-                reference: Either::Right(remote),
-            }))),
+            ObjectParsed::RemoteReference(remote) => {
+                self.current_offset += ObjectRef::size_in_bytes_for_raw();
+                self.runtime.inc_remote_ref(&remote);
+                Ok(Proxy {
+                    rt: Arc::downgrade(self.runtime),
+                    reference: Either::Right(remote),
+                })
+            }
             _ => return Err(Error::InvalidObjectType),
         }
     }

@@ -21,9 +21,10 @@ use libbinder_sys::{
     write_read::binder_read_write,
 };
 use nix::errno::Errno;
+pub use reader::Reader;
 pub use writer::Writer;
 
-use crate::{Runtime, packet::reader::Reader};
+use crate::Runtime;
 
 struct Owned {
     data: Vec<u8>,

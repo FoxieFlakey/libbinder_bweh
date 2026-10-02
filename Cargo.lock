@@ -141,8 +141,10 @@ name = "libbinder-test"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "either",
  "enumflags2",
  "libbinder",
+ "nix",
 ]
 
 [[package]]

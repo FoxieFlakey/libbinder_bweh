@@ -121,6 +121,13 @@ impl<T: ObjectTrait> B<T> {
     }
 }
 
+impl B<dyn ObjectTrait> {
+    pub fn downcast_ref<T: Any + ObjectTrait>(&self) -> Option<&T> {
+        let a: &dyn Any = &self.inner;
+        a.downcast_ref()
+    }
+}
+
 impl<T: ObjectTrait + ?Sized> Deref for B<T> {
     type Target = T;
 
