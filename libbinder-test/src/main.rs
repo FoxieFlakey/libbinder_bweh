@@ -9,7 +9,7 @@ use enumflags2::BitFlags;
 
 use libbinder::{
     ContextManagerInfo, Runtime,
-    object::{self, B, CallerIdentity, ObjectFlags, ObjectTrait},
+    object::{self, B, ObjectFlags, ObjectTrait},
     packet::{self, Packet},
     proxy::Proxy,
 };
@@ -30,23 +30,15 @@ impl ObjectTrait for Concrete {
         code: u32,
         _flags: enumflags2::BitFlags<object::Flag>,
         message: &mut Packet,
-        caller_identity: Option<CallerIdentity>,
     ) -> Option<(u32, Packet)> {
+        let rt: Arc<Runtime> = self.0.upgrade().unwrap();
         println!(
             "Handled code in {}: {code} from PID {} and EUID {}, security context {}",
             self.1,
-            caller_identity
-                .as_ref()
-                .map(|x| format!("{}", x.sender_pid))
-                .unwrap_or("unknown".to_string()),
-            caller_identity
-                .as_ref()
-                .map(|x| format!("{}", x.sender_euid))
-                .unwrap_or("unknown".to_string()),
-            caller_identity
-                .as_ref()
-                .map(|x| x.sender_security_ctx.as_ref())
-                .flatten()
+            rt.get_caller_identity().sender_pid,
+            rt.get_caller_identity().sender_euid,
+            rt.get_caller_identity()
+                .sender_security_ctx
                 .map(|x| format!("{}", x.to_string_lossy()))
                 .unwrap_or("unknown".to_string())
         );
@@ -65,7 +57,7 @@ impl ObjectTrait for Concrete {
                 w.finish()
             };
 
-            obj.on_transaction(1111, BitFlags::default(), &mut packet, None)
+            obj.on_transaction(1111, BitFlags::default(), &mut packet)
                 .unwrap();
         }
 
@@ -123,7 +115,7 @@ pub fn main() {
             };
 
             rt.get_manager()
-                .on_transaction(2929, BitFlags::default(), &mut packet, None)
+                .on_transaction(2929, BitFlags::default(), &mut packet)
                 .unwrap();
         }
         Some(x) => {

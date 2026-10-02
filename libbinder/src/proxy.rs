@@ -8,7 +8,7 @@ use libbinder_sys::{
 
 use crate::{
     Runtime,
-    object::{B, CallerIdentity, ObjectTrait},
+    object::{B, ObjectTrait},
 };
 
 pub struct Proxy {
@@ -80,16 +80,9 @@ impl ObjectTrait for Proxy {
         code: u32,
         flags: enumflags2::BitFlags<crate::object::Flag>,
         message: &mut crate::packet::Packet,
-        // When sending out this is ignored
-        caller_identity: Option<CallerIdentity>,
     ) -> Option<(u32, crate::packet::Packet)> {
-        assert!(
-            caller_identity.is_none(),
-            "Sending out to remote do not support setting caller identity"
-        );
-
         match &self.reference {
-            Either::Left(local) => local.on_transaction(code, flags, message, caller_identity),
+            Either::Left(local) => local.on_transaction(code, flags, message),
             Either::Right(x) => {
                 let rt: Arc<Runtime> = self
                     .rt

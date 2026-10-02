@@ -390,7 +390,7 @@ impl Runtime {
         }
 
         let (reply_code, reply) = meta
-            .on_transaction(code, flags, &mut packet, Some(self.get_caller_identity()))
+            .on_transaction(code, flags, &mut packet)
             .expect("Cannot perform transaction");
         drop(packet);
 

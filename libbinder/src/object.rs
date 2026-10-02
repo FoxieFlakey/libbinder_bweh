@@ -79,9 +79,6 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
         code: u32,
         flags: enumflags2::BitFlags<Flag>,
         message: &mut Packet,
-        // If None it means local transaction (a.k.a
-        // direct call)
-        caller_identity: Option<CallerIdentity>,
     ) -> Option<(u32, Packet)>;
 }
 
