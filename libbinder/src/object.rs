@@ -3,7 +3,7 @@ use std::{
     ffi::CString,
     io,
     ops::Deref,
-    sync::{RwLock, Weak},
+    sync::{Arc, RwLock, Weak},
 };
 
 use crate::{Runtime, packet::Packet, proxy::Proxy};
@@ -86,7 +86,7 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
     // to a remote. this is mainly so the remote
     // handle can be immediately sent
     fn get_remote<'a>(&'a self) -> Option<&'a Proxy>;
-    fn get_runtime<'a>(&'a self) -> &'a Weak<Runtime>;
+    fn get_runtime(&self) -> Arc<Runtime>;
     fn on_transaction(
         &self,
         code: u32,

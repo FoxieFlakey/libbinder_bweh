@@ -61,7 +61,7 @@ impl ObjectTrait for ImplManager {
         self.base.get_remote()
     }
 
-    fn get_runtime<'a>(&'a self) -> &'a Weak<Runtime> {
+    fn get_runtime(&self) -> Arc<Runtime> {
         self.base.get_runtime()
     }
 
@@ -83,12 +83,7 @@ impl ObjectTrait for ImplManager {
                                 .unwrap()
                                 .register(Arc::new(B::new(service)), name);
 
-                            ret.map(|_| {
-                                Some(
-                                    packet::Writer::new(self.get_runtime().upgrade().unwrap())
-                                        .finish(),
-                                )
-                            })
+                            ret.map(|_| Some(packet::Writer::new(self.get_runtime()).finish()))
                         }
                         Err(e) => Err(anyhow!("Malform service name: {e}")),
                     },
@@ -102,23 +97,22 @@ impl ObjectTrait for ImplManager {
                 Ok(name) => {
                     let ret = self.derived.upgrade().unwrap().unregister(name);
 
-                    ret.map(|_| {
-                        Some(packet::Writer::new(self.get_runtime().upgrade().unwrap()).finish())
-                    })
+                    ret.map(|_| Some(packet::Writer::new(self.get_runtime()).finish()))
                 }
                 Err(x) => Err(anyhow!("Malformed interface name: {x}")),
             },
-            service_manager::SHUTDOWN_CODE => {
-                self.derived.upgrade().unwrap().shutdown().map(|_| {
-                    Some(packet::Writer::new(self.get_runtime().upgrade().unwrap()).finish())
-                })
-            }
+            service_manager::SHUTDOWN_CODE => self
+                .derived
+                .upgrade()
+                .unwrap()
+                .shutdown()
+                .map(|_| Some(packet::Writer::new(self.get_runtime()).finish())),
             service_manager::GET_SERVICE_CODE => match str::from_utf8(reader.get_rest_of_data()) {
                 Ok(name) => {
                     let ret = self.derived.upgrade().unwrap().get_service(name);
 
                     ret.map(|x| {
-                        let mut writer = packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                        let mut writer = packet::Writer::new(self.get_runtime());
                         writer.write_reference(x);
                         Some(writer.finish())
                     })
@@ -128,9 +122,7 @@ impl ObjectTrait for ImplManager {
             service_manager::HEALTH_CHECK_CODE => {
                 let ret = self.derived.upgrade().unwrap().health_check();
 
-                ret.map(|_| {
-                    Some(packet::Writer::new(self.get_runtime().upgrade().unwrap()).finish())
-                })
+                ret.map(|_| Some(packet::Writer::new(self.get_runtime()).finish()))
             }
             _ => return self.base.on_transaction(code, flags, message),
         };
@@ -149,7 +141,7 @@ impl ObjectTrait for ImplManager {
                     return Ok(None);
                 }
 
-                let mut writer = packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                let mut writer = packet::Writer::new(self.get_runtime());
                 writer.write_bytes(format!("{e:#}"));
                 Ok(Some((REPLY_ERROR, writer.finish())))
             }
@@ -217,14 +209,7 @@ impl IServiceManager for ImplManager {
 
         state.services.insert(
             name.to_string(),
-            (
-                service,
-                self.get_runtime()
-                    .upgrade()
-                    .unwrap()
-                    .get_caller_identity()
-                    .sender_pid,
-            ),
+            (service, self.get_runtime().get_caller_identity().sender_pid),
         );
         Ok(())
     }
@@ -234,12 +219,7 @@ impl IServiceManager for ImplManager {
         let Some((_, owner)) = state.services.get(name) else {
             bail!("Service '{name}' is unknown");
         };
-        let caller_pid: Pid = self
-            .get_runtime()
-            .upgrade()
-            .unwrap()
-            .get_caller_identity()
-            .sender_pid;
+        let caller_pid: Pid = self.get_runtime().get_caller_identity().sender_pid;
 
         if owner != &caller_pid {
             bail!("You do not own service '{name}'");

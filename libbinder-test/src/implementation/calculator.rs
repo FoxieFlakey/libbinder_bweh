@@ -1,4 +1,4 @@
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use anyhow::anyhow;
 use libbinder::{
@@ -41,7 +41,7 @@ impl ObjectTrait for ImplCalculator {
         self.base.get_remote()
     }
 
-    fn get_runtime<'a>(&'a self) -> &'a Weak<Runtime> {
+    fn get_runtime(&self) -> Arc<Runtime> {
         self.base.get_runtime()
     }
 
@@ -67,8 +67,7 @@ impl ObjectTrait for ImplCalculator {
                                     .add(f32::from_ne_bytes(a_raw), f32::from_ne_bytes(b_raw));
 
                                 ret.map(|x| {
-                                    let mut writer =
-                                        packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                                    let mut writer = packet::Writer::new(self.get_runtime());
                                     writer.write_bytes(x.to_ne_bytes());
                                     Some(writer.finish())
                                 })
@@ -93,8 +92,7 @@ impl ObjectTrait for ImplCalculator {
                                     .sub(f32::from_ne_bytes(a_raw), f32::from_ne_bytes(b_raw));
 
                                 ret.map(|x| {
-                                    let mut writer =
-                                        packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                                    let mut writer = packet::Writer::new(self.get_runtime());
                                     writer.write_bytes(x.to_ne_bytes());
                                     Some(writer.finish())
                                 })
@@ -119,8 +117,7 @@ impl ObjectTrait for ImplCalculator {
                                     .mul(f32::from_ne_bytes(a_raw), f32::from_ne_bytes(b_raw));
 
                                 ret.map(|x| {
-                                    let mut writer =
-                                        packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                                    let mut writer = packet::Writer::new(self.get_runtime());
                                     writer.write_bytes(x.to_ne_bytes());
                                     Some(writer.finish())
                                 })
@@ -145,8 +142,7 @@ impl ObjectTrait for ImplCalculator {
                                     .div(f32::from_ne_bytes(a_raw), f32::from_ne_bytes(b_raw));
 
                                 ret.map(|x| {
-                                    let mut writer =
-                                        packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                                    let mut writer = packet::Writer::new(self.get_runtime());
                                     writer.write_bytes(x.to_ne_bytes());
                                     Some(writer.finish())
                                 })
@@ -171,8 +167,7 @@ impl ObjectTrait for ImplCalculator {
                                     .modulo(f32::from_ne_bytes(a_raw), f32::from_ne_bytes(b_raw));
 
                                 ret.map(|x| {
-                                    let mut writer =
-                                        packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                                    let mut writer = packet::Writer::new(self.get_runtime());
                                     writer.write_bytes(x.to_ne_bytes());
                                     Some(writer.finish())
                                 })
@@ -200,7 +195,7 @@ impl ObjectTrait for ImplCalculator {
                     return Ok(None);
                 }
 
-                let mut writer = packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                let mut writer = packet::Writer::new(self.get_runtime());
                 writer.write_bytes(format!("{e:#}"));
                 Ok(Some((REPLY_ERROR, writer.finish())))
             }
@@ -225,11 +220,7 @@ impl IService for ImplCalculator {
     fn say_hello(&self) -> anyhow::Result<()> {
         println!(
             "[Calculator] Hi from calculator, requested by {}",
-            self.get_runtime()
-                .upgrade()
-                .unwrap()
-                .get_caller_identity()
-                .sender_pid
+            self.get_runtime().get_caller_identity().sender_pid
         );
         self.base.say_hello()
     }

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use enumflags2::BitFlags;
@@ -39,7 +39,7 @@ impl ObjectTrait for IServiceManagerProxy {
         self.0.get_remote()
     }
 
-    fn get_runtime(&self) -> &Weak<Runtime> {
+    fn get_runtime(&self) -> Arc<Runtime> {
         self.0.get_runtime()
     }
 
@@ -65,7 +65,7 @@ impl IServiceManager for IServiceManagerProxy {
             .on_transaction(
                 service_manager::SHUTDOWN_CODE,
                 BitFlags::default(),
-                &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
+                &mut packet::Writer::new(self.0.get_runtime()).finish(),
             )
             .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
@@ -81,7 +81,7 @@ impl IServiceManager for IServiceManagerProxy {
             .on_transaction(
                 service_manager::HEALTH_CHECK_CODE,
                 BitFlags::default(),
-                &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
+                &mut packet::Writer::new(self.0.get_runtime()).finish(),
             )
             .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
@@ -93,7 +93,7 @@ impl IServiceManager for IServiceManagerProxy {
     }
 
     fn register(&self, service: Arc<B<dyn IService>>, name: &str) -> anyhow::Result<()> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_reference(service);
         writer.write_bytes(name.as_bytes());
 
@@ -113,7 +113,7 @@ impl IServiceManager for IServiceManagerProxy {
     }
 
     fn unregister(&self, name: &str) -> anyhow::Result<()> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_bytes(name.as_bytes());
 
         let (code, packet) = self
@@ -132,7 +132,7 @@ impl IServiceManager for IServiceManagerProxy {
     }
 
     fn get_service(&self, name: &str) -> anyhow::Result<Arc<B<dyn IService>>> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_bytes(name.as_bytes());
 
         let (code, packet) = self

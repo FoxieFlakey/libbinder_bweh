@@ -1,8 +1,9 @@
-use std::sync::Weak;
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use enumflags2::BitFlags;
 use libbinder::{
+    Runtime,
     object::{ObjectTrait, TransactionError},
     packet,
     proxy::Proxy,
@@ -29,7 +30,7 @@ impl ObjectTrait for ObjectProxy {
         Some(&self.0)
     }
 
-    fn get_runtime(&self) -> &Weak<libbinder::Runtime> {
+    fn get_runtime(&self) -> Arc<Runtime> {
         self.0.get_runtime()
     }
 
@@ -45,7 +46,7 @@ impl ObjectTrait for ObjectProxy {
 
 impl IObject for ObjectProxy {
     fn has_interface(&self, interface: &str) -> anyhow::Result<bool> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_bytes(interface.as_bytes());
         let (code, packet) = self
             .on_transaction(

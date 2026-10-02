@@ -1,4 +1,4 @@
-use std::sync::Weak;
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use enumflags2::BitFlags;
@@ -39,7 +39,7 @@ impl ObjectTrait for ICalculatorProxy {
         self.0.get_remote()
     }
 
-    fn get_runtime(&self) -> &Weak<Runtime> {
+    fn get_runtime(&self) -> Arc<Runtime> {
         self.0.get_runtime()
     }
 
@@ -71,7 +71,7 @@ impl IService for ICalculatorProxy {
 
 impl ICalculator for ICalculatorProxy {
     fn add(&self, a: f32, b: f32) -> anyhow::Result<f32> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_bytes(a.to_ne_bytes());
         writer.write_bytes(b.to_ne_bytes());
 
@@ -96,7 +96,7 @@ impl ICalculator for ICalculatorProxy {
     }
 
     fn sub(&self, a: f32, b: f32) -> anyhow::Result<f32> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_bytes(a.to_ne_bytes());
         writer.write_bytes(b.to_ne_bytes());
 
@@ -121,7 +121,7 @@ impl ICalculator for ICalculatorProxy {
     }
 
     fn mul(&self, a: f32, b: f32) -> anyhow::Result<f32> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_bytes(a.to_ne_bytes());
         writer.write_bytes(b.to_ne_bytes());
 
@@ -146,7 +146,7 @@ impl ICalculator for ICalculatorProxy {
     }
 
     fn div(&self, a: f32, b: f32) -> anyhow::Result<f32> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_bytes(a.to_ne_bytes());
         writer.write_bytes(b.to_ne_bytes());
 
@@ -171,7 +171,7 @@ impl ICalculator for ICalculatorProxy {
     }
 
     fn modulo(&self, a: f32, b: f32) -> anyhow::Result<f32> {
-        let mut writer = packet::Writer::new(self.0.get_runtime().upgrade().unwrap());
+        let mut writer = packet::Writer::new(self.0.get_runtime());
         writer.write_bytes(a.to_ne_bytes());
         writer.write_bytes(b.to_ne_bytes());
 

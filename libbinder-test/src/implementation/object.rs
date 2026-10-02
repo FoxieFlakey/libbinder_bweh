@@ -1,4 +1,4 @@
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use anyhow::anyhow;
 use enumflags2::BitFlags;
@@ -27,8 +27,8 @@ impl ObjectTrait for ImplObject {
         None
     }
 
-    fn get_runtime<'a>(&'a self) -> &'a Weak<Runtime> {
-        &self.0
+    fn get_runtime(&self) -> Arc<Runtime> {
+        self.0.upgrade().unwrap()
     }
 
     fn on_transaction(
@@ -44,7 +44,7 @@ impl ObjectTrait for ImplObject {
                     let ret = self.1.upgrade().unwrap().has_interface(name);
 
                     ret.map(|x| {
-                        let mut writer = packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                        let mut writer = packet::Writer::new(self.get_runtime());
                         if x {
                             writer.write_bytes(&0x01u8.to_ne_bytes());
                         } else {
@@ -72,7 +72,7 @@ impl ObjectTrait for ImplObject {
                     return Ok(None);
                 }
 
-                let mut writer = packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                let mut writer = packet::Writer::new(self.get_runtime());
                 writer.write_bytes(format!("{e:#}"));
                 Ok(Some((REPLY_ERROR, writer.finish())))
             }

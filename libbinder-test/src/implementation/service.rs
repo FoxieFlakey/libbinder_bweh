@@ -1,4 +1,4 @@
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use enumflags2::BitFlags;
 use libbinder::{
@@ -42,7 +42,7 @@ impl ObjectTrait for ImplService {
         self.base.get_remote()
     }
 
-    fn get_runtime<'a>(&'a self) -> &'a Weak<Runtime> {
+    fn get_runtime(&self) -> Arc<Runtime> {
         self.base.get_runtime()
     }
 
@@ -52,16 +52,21 @@ impl ObjectTrait for ImplService {
         flags: BitFlags<Flag>,
         message: &mut Packet,
     ) -> Result<Option<(u32, Packet)>, TransactionError> {
-        let response =
-            match code {
-                service::SAY_HELLO_CODE => self.derived.upgrade().unwrap().say_hello().map(|_| {
-                    Some(packet::Writer::new(self.get_runtime().upgrade().unwrap()).finish())
-                }),
-                service::STOP_CODE => self.derived.upgrade().unwrap().stop().map(|_| {
-                    Some(packet::Writer::new(self.get_runtime().upgrade().unwrap()).finish())
-                }),
-                _ => return self.base.on_transaction(code, flags, message),
-            };
+        let response = match code {
+            service::SAY_HELLO_CODE => self
+                .derived
+                .upgrade()
+                .unwrap()
+                .say_hello()
+                .map(|_| Some(packet::Writer::new(self.get_runtime()).finish())),
+            service::STOP_CODE => self
+                .derived
+                .upgrade()
+                .unwrap()
+                .stop()
+                .map(|_| Some(packet::Writer::new(self.get_runtime()).finish())),
+            _ => return self.base.on_transaction(code, flags, message),
+        };
 
         match response {
             Ok(Some(response)) => Ok(Some((REPLY_SUCCESS, response))),
@@ -77,7 +82,7 @@ impl ObjectTrait for ImplService {
                     return Ok(None);
                 }
 
-                let mut writer = packet::Writer::new(self.get_runtime().upgrade().unwrap());
+                let mut writer = packet::Writer::new(self.get_runtime());
                 writer.write_bytes(format!("{e:#}"));
                 Ok(Some((REPLY_ERROR, writer.finish())))
             }
@@ -98,11 +103,7 @@ impl IService for ImplService {
     fn stop(&self) -> anyhow::Result<()> {
         println!(
             "[Base service] Shutting down, triggered by {}",
-            self.get_runtime()
-                .upgrade()
-                .unwrap()
-                .get_caller_identity()
-                .sender_pid
+            self.get_runtime().get_caller_identity().sender_pid
         );
         self.shutdown_triggered.trigger();
         Ok(())
@@ -111,11 +112,7 @@ impl IService for ImplService {
     fn say_hello(&self) -> anyhow::Result<()> {
         println!(
             "[Base service] Hello!!!. Requested by {}",
-            self.get_runtime()
-                .upgrade()
-                .unwrap()
-                .get_caller_identity()
-                .sender_pid
+            self.get_runtime().get_caller_identity().sender_pid
         );
         Ok(())
     }

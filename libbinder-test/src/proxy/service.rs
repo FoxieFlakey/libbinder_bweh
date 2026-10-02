@@ -1,4 +1,4 @@
-use std::sync::Weak;
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use enumflags2::BitFlags;
@@ -38,7 +38,7 @@ impl ObjectTrait for IServiceProxy {
         self.0.get_remote()
     }
 
-    fn get_runtime(&self) -> &Weak<Runtime> {
+    fn get_runtime(&self) -> Arc<Runtime> {
         self.0.get_runtime()
     }
 
@@ -64,7 +64,7 @@ impl IService for IServiceProxy {
             .on_transaction(
                 service::STOP_CODE,
                 BitFlags::default(),
-                &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
+                &mut packet::Writer::new(self.0.get_runtime()).finish(),
             )
             .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
@@ -79,7 +79,7 @@ impl IService for IServiceProxy {
             .on_transaction(
                 service::SAY_HELLO_CODE,
                 BitFlags::default(),
-                &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
+                &mut packet::Writer::new(self.0.get_runtime()).finish(),
             )
             .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");

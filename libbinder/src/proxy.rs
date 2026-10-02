@@ -29,7 +29,7 @@ impl Proxy {
     pub fn from_object(local: Arc<B<dyn ObjectTrait>>) -> Self {
         match local.get_remote() {
             Some(proxy) => Self {
-                rt: local.get_runtime().clone(),
+                rt: Arc::downgrade(&local.get_runtime()),
                 reference: Either::Right(
                     *proxy
                         .reference
@@ -43,7 +43,7 @@ impl Proxy {
                 ),
             },
             None => Self {
-                rt: local.get_runtime().clone(),
+                rt: Arc::downgrade(&local.get_runtime()),
                 reference: Either::Left(local),
             },
         }
@@ -59,8 +59,8 @@ impl ObjectTrait for Proxy {
         }
     }
 
-    fn get_runtime<'a>(&'a self) -> &'a Weak<Runtime> {
-        &self.rt
+    fn get_runtime(&self) -> Arc<Runtime> {
+        self.rt.upgrade().unwrap()
     }
 
     fn on_transaction(
