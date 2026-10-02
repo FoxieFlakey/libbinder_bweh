@@ -60,8 +60,8 @@ impl IObject for ICalculatorProxy {
 }
 
 impl IService for ICalculatorProxy {
-    fn stop(&self) {
-        self.0.stop();
+    fn stop(&self) -> anyhow::Result<()> {
+        self.0.stop()
     }
 
     fn say_hello(&self) -> anyhow::Result<()> {

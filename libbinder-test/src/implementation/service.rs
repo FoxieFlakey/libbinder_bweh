@@ -57,10 +57,9 @@ impl ObjectTrait for ImplService {
                 service::SAY_HELLO_CODE => self.derived.upgrade().unwrap().say_hello().map(|_| {
                     Some(packet::Writer::new(self.get_runtime().upgrade().unwrap()).finish())
                 }),
-                service::STOP_CODE => {
-                    self.derived.upgrade().unwrap().stop();
-                    Ok(None)
-                }
+                service::STOP_CODE => self.derived.upgrade().unwrap().stop().map(|_| {
+                    Some(packet::Writer::new(self.get_runtime().upgrade().unwrap()).finish())
+                }),
                 _ => return self.base.on_transaction(code, flags, message),
             };
 
@@ -96,7 +95,7 @@ impl IObject for ImplService {
 }
 
 impl IService for ImplService {
-    fn stop(&self) {
+    fn stop(&self) -> anyhow::Result<()> {
         println!(
             "[Base service] Shutting down, triggered by {}",
             self.get_runtime()
@@ -106,6 +105,7 @@ impl IService for ImplService {
                 .sender_pid
         );
         self.shutdown_triggered.trigger();
+        Ok(())
     }
 
     fn say_hello(&self) -> anyhow::Result<()> {

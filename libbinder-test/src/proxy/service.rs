@@ -59,13 +59,18 @@ impl IObject for IServiceProxy {
 }
 
 impl IService for IServiceProxy {
-    fn stop(&self) {
-        let ret = self.on_transaction(
-            service::STOP_CODE,
-            Flag::OneWay.into(),
-            &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
-        );
-        assert!(ret.is_none(), "This suppose be oneway transaction");
+    fn stop(&self) -> anyhow::Result<()> {
+        let (code, packet) = self
+            .on_transaction(
+                service::STOP_CODE,
+                BitFlags::default(),
+                &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
+            )
+            .expect("This suppose be non oneway transaction");
+        if code != REPLY_SUCCESS {
+            return Err(proxy::decode_error(&packet));
+        }
+        Ok(())
     }
 
     fn say_hello(&self) -> anyhow::Result<()> {

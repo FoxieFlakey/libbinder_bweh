@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    mem,
     sync::{Arc, RwLock, Weak},
 };
 
@@ -108,8 +109,9 @@ impl ObjectTrait for ImplManager {
                 Err(x) => Err(anyhow!("Malformed interface name: {x}")),
             },
             service_manager::SHUTDOWN_CODE => {
-                self.derived.upgrade().unwrap().shutdown();
-                Ok(None)
+                self.derived.upgrade().unwrap().shutdown().map(|_| {
+                    Some(packet::Writer::new(self.get_runtime().upgrade().unwrap()).finish())
+                })
             }
             service_manager::GET_SERVICE_CODE => match str::from_utf8(reader.get_rest_of_data()) {
                 Ok(name) => {
@@ -175,17 +177,32 @@ impl IServiceManager for ImplManager {
         Ok(())
     }
 
-    fn shutdown(&self) {
+    fn shutdown(&self) -> anyhow::Result<()> {
         let mut state = self.state.write().unwrap();
         state.is_shutting_down = true;
+        let mut registry = mem::take(&mut state.services);
         drop(state);
 
-        let state = self.state.read().unwrap();
         // Trigger shutdown on all services
-        state.services.values().for_each(|x| {
-            x.0.stop();
-        });
+        let keys = registry.keys().cloned().collect::<Vec<_>>();
+        for service_name in keys {
+            let service = registry.get(&service_name).unwrap();
+            if let Err(e) = service
+                .0
+                .stop()
+                .with_context(|| format!("Cannot stop service '{}'", service_name))
+            {
+                let mut state = self.state.write().unwrap();
+                state.is_shutting_down = false;
+                state.services = registry;
+                drop(state);
+                return Err(e);
+            }
+            registry.remove(&service_name);
+        }
+
         self.shutdown_event.trigger();
+        Ok(())
     }
 
     fn register(&self, service: Arc<B<dyn IService>>, name: &str) -> anyhow::Result<()> {

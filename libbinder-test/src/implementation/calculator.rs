@@ -218,7 +218,7 @@ impl IObject for ImplCalculator {
 }
 
 impl IService for ImplCalculator {
-    fn stop(&self) {
+    fn stop(&self) -> anyhow::Result<()> {
         self.base.stop()
     }
 

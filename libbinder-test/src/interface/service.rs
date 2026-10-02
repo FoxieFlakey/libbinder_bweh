@@ -1,8 +1,7 @@
 use crate::interface::object::{self, IObject};
 
 pub trait IService: IObject {
-    // oneway
-    fn stop(&self);
+    fn stop(&self) -> anyhow::Result<()>;
     fn say_hello(&self) -> anyhow::Result<()>;
 }
 

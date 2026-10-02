@@ -60,13 +60,19 @@ impl IObject for IServiceManagerProxy {
 }
 
 impl IServiceManager for IServiceManagerProxy {
-    fn shutdown(&self) {
-        let ret = self.on_transaction(
-            service_manager::SHUTDOWN_CODE,
-            Flag::OneWay.into(),
-            &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
-        );
-        assert!(ret.is_none(), "This suppose be oneway transaction");
+    fn shutdown(&self) -> anyhow::Result<()> {
+        let (code, packet) = self
+            .on_transaction(
+                service_manager::SHUTDOWN_CODE,
+                BitFlags::default(),
+                &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
+            )
+            .expect("This suppose be non oneway transaction");
+        if code != REPLY_SUCCESS {
+            return Err(proxy::decode_error(&packet));
+        }
+
+        Ok(())
     }
 
     fn health_check(&self) -> anyhow::Result<()> {

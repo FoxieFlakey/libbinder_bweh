@@ -8,8 +8,7 @@ use crate::interface::{
 };
 
 pub trait IServiceManager: IObject {
-    // oneway
-    fn shutdown(&self);
+    fn shutdown(&self) -> anyhow::Result<()>;
     fn register(&self, service: Arc<B<dyn IService>>, name: &str) -> anyhow::Result<()>;
     fn unregister(&self, name: &str) -> anyhow::Result<()>;
     fn get_service(&self, name: &str) -> anyhow::Result<Arc<B<dyn IService>>>;

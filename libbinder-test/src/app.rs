@@ -87,9 +87,12 @@ pub fn main() {
                 Err(e) => println!("Cannot perform health check: {e}"),
             },
             "stop" => {
-                manager.shutdown();
-                println!("Good bye! UwU");
-                break;
+                if let Err(e) = manager.shutdown() {
+                    println!("Cannot shutdown manager: {e}");
+                } else {
+                    println!("Good bye! UwU");
+                    break;
+                }
             }
             x => println!("Unknown command '{x}'"),
         }
