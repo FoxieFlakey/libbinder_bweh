@@ -14,6 +14,7 @@ pub struct Writer {
     data: Vec<u8>,
     offsets: Vec<usize>,
     byte_bufs: Vec<Box<dyn AsRef<[u8]>>>,
+    buffers_size: usize,
 }
 
 impl Drop for Writer {
@@ -29,6 +30,7 @@ impl Writer {
             data: Vec::new(),
             offsets: Vec::new(),
             byte_bufs: Vec::new(),
+            buffers_size: 0,
         }
     }
 
@@ -46,6 +48,7 @@ impl Writer {
             data,
             offsets,
             byte_bufs,
+            buffers_size: 0,
         }
     }
 
@@ -71,6 +74,7 @@ impl Writer {
                 offsets: mem::take(&mut self.offsets),
                 byte_bufs: mem::take(&mut self.byte_bufs),
             }),
+            buffers_size: mem::take(&mut self.buffers_size),
         }
     }
 

@@ -17,6 +17,7 @@ use libbinder_sys::{
     commands::Command,
     transaction::{
         Transaction, TransactionDataCommon, TransactionKernelManaged, TransactionNotKernelMananged,
+        TransactionNotKernelManangedSg,
     },
     types::reference::{ObjectRef, ObjectRefLocal, ObjectRefRemote},
     write_read::binder_read_write,
@@ -234,21 +235,24 @@ impl Runtime {
         let flags_out = object::Flag::into_raw(flags);
         let is_one_way = flags.contains(object::Flag::OneWay);
 
-        let transaction = Transaction::NotKernelManaged(TransactionNotKernelMananged {
-            data: TransactionDataCommon {
-                code,
-                data_slice: &packet.get_data(),
-                flags: flags_out,
-                offsets: &packet.get_offsets(),
-                target: ObjectRef::Remote(target),
-                secctx: None,
-                sender_euid: 0,
-                sender_pid: 0,
+        let transaction = Transaction::NotKernelManagedSg(TransactionNotKernelManangedSg {
+            data: TransactionNotKernelMananged {
+                data: TransactionDataCommon {
+                    code,
+                    data_slice: &packet.get_data(),
+                    flags: flags_out,
+                    offsets: &packet.get_offsets(),
+                    target: ObjectRef::Remote(target),
+                    secctx: None,
+                    sender_euid: 0,
+                    sender_pid: 0,
+                },
             },
+            buffers_size: packet.get_buffers_size(),
         });
 
         let mut write_buf = Vec::new();
-        write_buf.extend_from_slice(&Command::SendTransaction.as_bytes());
+        write_buf.extend_from_slice(&Command::SendTransactionSG.as_bytes());
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
         self.do_read_write(&write_buf, &mut [])
             .expect("Cannot perform BINDER_WRITE_READ to send transaction");
@@ -291,7 +295,7 @@ impl Runtime {
                     let code = transaction.get_common().code;
                     let kernel = match transaction {
                         Transaction::KernelManaged(x) => x,
-                        Transaction::NotKernelManaged(_) => {
+                        Transaction::NotKernelManagedSg(_) | Transaction::NotKernelManaged(_) => {
                             unreachable!("This has to be from kernel")
                         }
                     };
@@ -401,21 +405,24 @@ impl Runtime {
         };
 
         let mut write_buf = Vec::new();
-        write_buf.extend_from_slice(&Command::SendReply.as_bytes());
-        let transaction = Transaction::NotKernelManaged(TransactionNotKernelMananged {
-            data: TransactionDataCommon {
-                code: reply_code,
-                data_slice: &reply.get_data(),
-                flags: BitFlags::default(),
-                offsets: &reply.get_offsets(),
-                target: ObjectRef::Local(ObjectRefLocal {
-                    data: 0,
-                    extra_data: 0,
-                }),
-                secctx: None,
-                sender_euid: 0,
-                sender_pid: 0,
+        write_buf.extend_from_slice(&Command::SendReplySG.as_bytes());
+        let transaction = Transaction::NotKernelManagedSg(TransactionNotKernelManangedSg {
+            data: TransactionNotKernelMananged {
+                data: TransactionDataCommon {
+                    code: reply_code,
+                    data_slice: &reply.get_data(),
+                    flags: BitFlags::default(),
+                    offsets: &reply.get_offsets(),
+                    target: ObjectRef::Local(ObjectRefLocal {
+                        data: 0,
+                        extra_data: 0,
+                    }),
+                    secctx: None,
+                    sender_euid: 0,
+                    sender_pid: 0,
+                },
             },
+            buffers_size: reply.get_buffers_size(),
         });
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
         self.do_read_write(&write_buf, &mut [])

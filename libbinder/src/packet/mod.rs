@@ -36,6 +36,7 @@ pub struct Packet {
     runtime: Arc<Runtime>,
     inner: Either<Owned, TransactionKernelManaged>,
     is_sent: bool,
+    buffers_size: usize,
 }
 
 impl Drop for Packet {
@@ -50,7 +51,19 @@ impl Packet {
     }
 
     pub(crate) fn from_kernel(runtime: Arc<Runtime>, kernel: TransactionKernelManaged) -> Self {
+        let mut buffers_size = 0;
+        for_each_object(
+            kernel.get_data().data_slice,
+            kernel.get_data().offsets,
+            |obj| match obj {
+                ObjectParsed::LocalReference(_) => (),
+                ObjectParsed::RemoteReference(_) => (),
+                ObjectParsed::ByteBuffer(buffer) => buffers_size += buffer.buffer.len(),
+            },
+        );
+
         Self {
+            buffers_size,
             runtime: runtime,
             inner: Either::Right(kernel),
             is_sent: false,
@@ -112,6 +125,10 @@ impl Packet {
         owned.offsets.clear();
         owned.byte_bufs.clear();
         Writer::new_recycled(runtime, owned.data, owned.offsets, owned.byte_bufs)
+    }
+
+    pub(crate) fn get_buffers_size(&self) -> usize {
+        self.buffers_size
     }
 
     // Appropriately does needed strong count increments

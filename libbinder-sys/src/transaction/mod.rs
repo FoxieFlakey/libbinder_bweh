@@ -8,10 +8,11 @@ use crate::{BinderUsize, object::reference::ObjectRef};
 mod kernel_managed;
 mod not_kernel_managed;
 pub use kernel_managed::TransactionKernelManaged;
-pub use not_kernel_managed::TransactionNotKernelMananged;
+pub use not_kernel_managed::{TransactionNotKernelMananged, TransactionNotKernelManangedSg};
 
 pub enum Transaction<'buffer, 'buffer_offsets> {
     NotKernelManaged(TransactionNotKernelMananged<'buffer, 'buffer_offsets>),
+    NotKernelManagedSg(TransactionNotKernelManangedSg<'buffer, 'buffer_offsets>),
     KernelManaged(TransactionKernelManaged),
 }
 
@@ -19,6 +20,7 @@ impl<'buffer, 'buffer_offsets> Transaction<'buffer, 'buffer_offsets> {
     pub fn with_bytes<F: FnOnce(&[u8]) -> R, R>(&self, func: F) -> R {
         match self {
             Self::NotKernelManaged(x) => x.with_bytes(func),
+            Self::NotKernelManagedSg(x) => x.with_bytes(func),
             Self::KernelManaged(x) => x.with_bytes(func),
         }
     }
@@ -30,6 +32,7 @@ impl<'buffer, 'buffer_offsets> Transaction<'buffer, 'buffer_offsets> {
         match self {
             Self::KernelManaged(x) => x.with_data_mut(func),
             Self::NotKernelManaged(x) => func(&mut x.data),
+            Self::NotKernelManagedSg(x) => func(&mut x.data.data),
         }
     }
 
@@ -39,6 +42,7 @@ impl<'buffer, 'buffer_offsets> Transaction<'buffer, 'buffer_offsets> {
         match self {
             Self::KernelManaged(x) => x.get_data(),
             Self::NotKernelManaged(x) => &x.data,
+            Self::NotKernelManagedSg(x) => &x.data.data,
         }
     }
 }
