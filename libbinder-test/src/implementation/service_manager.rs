@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, anyhow, bail};
 use enumflags2::BitFlags;
 use libbinder::{
-    Runtime,
+    DeathNotificationToken, Runtime,
     object::{B, Flag, ObjectTrait, TransactionError},
     packet::{self, Packet},
     proxy::Proxy,
@@ -26,8 +26,14 @@ use crate::{
     proxy::service::IServiceProxy,
 };
 
+struct ServiceInfo {
+    service: Arc<B<dyn IService>>,
+    owning_pid: Pid,
+    death_notification: DeathNotificationToken,
+}
+
 struct State {
-    services: HashMap<String, (Arc<B<dyn IService>>, Pid)>,
+    services: HashMap<String, ServiceInfo>,
     is_shutting_down: bool,
 }
 
@@ -162,7 +168,7 @@ impl IServiceManager for ImplManager {
     fn health_check(&self) -> anyhow::Result<()> {
         let state = self.state.read().unwrap();
         for service in &state.services {
-            service.1.0.say_hello().with_context(|| {
+            service.1.service.say_hello().with_context(|| {
                 format!("Cannot check service's health (Service: {})", service.0)
             })?;
         }
@@ -180,7 +186,7 @@ impl IServiceManager for ImplManager {
         for service_name in keys {
             let service = registry.get(&service_name).unwrap();
             if let Err(e) = service
-                .0
+                .service
                 .stop()
                 .with_context(|| format!("Cannot stop service '{}'", service_name))
             {
@@ -188,9 +194,11 @@ impl IServiceManager for ImplManager {
                 state.is_shutting_down = false;
                 state.services = registry;
                 drop(state);
+                println!("Cannot stop service '{service_name}': {e}");
                 return Err(e);
             }
             registry.remove(&service_name);
+            println!("Stopped service '{service_name}'");
         }
 
         self.shutdown_event.trigger();
@@ -207,31 +215,65 @@ impl IServiceManager for ImplManager {
             bail!("Service '{name}' already registered")
         }
 
+        let rt = self.get_runtime();
+        let this = self.base.get_derived().clone();
+        let name_cloned = name.to_string();
+        let at_registration_proxy = service
+            .get_remote()
+            .expect("Service manager only handles removes, never register local services on itself")
+            .clone();
         state.services.insert(
             name.to_string(),
-            (service, self.get_runtime().get_caller_identity().sender_pid),
+            ServiceInfo {
+                owning_pid: rt.get_caller_identity().sender_pid,
+                death_notification: rt
+                    .attach_death_callback(&service, move || {
+                        if let Some(x) = this
+                            .upgrade()
+                            .map(|x| x as Arc<B<dyn ObjectTrait>>)
+                        {
+                            let x = x.downcast_ref::<ImplManager>().unwrap();
+                            let mut state = x.state.write().unwrap();
+                            if let Some(x) = state.services.get(&name_cloned) {
+                                let remote = x.service.get_remote().expect("Service manager only handles removes, never register local services on itself");
+                                if remote == &at_registration_proxy {
+                                    println!("Service '{name_cloned}' died, unregistering");
+                                    // it is same service, lets remove
+                                    state.services.remove(&name_cloned);
+                                }
+                            }
+                        }
+                    })
+                    .expect("Service manager only handles removes, never register local services on itself"),
+                service,
+            },
         );
+        println!("Registered service '{name}'");
         Ok(())
     }
 
     fn unregister(&self, name: &str) -> anyhow::Result<()> {
         let mut state = self.state.write().unwrap();
-        let Some((_, owner)) = state.services.get(name) else {
+        let Some(ServiceInfo { owning_pid, .. }) = state.services.get(name) else {
             bail!("Service '{name}' is unknown");
         };
         let caller_pid: Pid = self.get_runtime().get_caller_identity().sender_pid;
 
-        if owner != &caller_pid {
+        if owning_pid != &caller_pid {
             bail!("You do not own service '{name}'");
         }
 
-        state.services.remove(name);
+        let result = state.services.remove(name).unwrap();
+        let _ = self
+            .get_runtime()
+            .detach_death_callback(result.death_notification);
+        println!("Unregistering service '{name}'");
         Ok(())
     }
 
     fn get_service(&self, name: &str) -> anyhow::Result<Arc<B<dyn IService>>> {
         match self.state.read().unwrap().services.get(name) {
-            Some(x) => Ok(x.0.clone()),
+            Some(x) => Ok(x.service.clone()),
             None => bail!("Cannot find service: {name}"),
         }
     }

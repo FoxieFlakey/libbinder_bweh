@@ -1,5 +1,5 @@
 use libbinder_sys::{
-    BinderUsize,
+    BinderFrozenStateInfo, BinderUsize,
     transaction::{Transaction, TransactionKernelManaged},
     types::reference::ObjectRefLocal,
 };
@@ -23,13 +23,17 @@ pub enum RetVal<'buf> {
     Transaction(Transaction<'buf, 'buf>),
     TransactionComplete,
     Reply(Transaction<'buf, 'buf>),
-    DeadBinder(#[expect(unused)] usize),
+    DeadBinder(usize),
+    ClearDeathNotificationDone(usize),
+    ClearFreezeNotificationDone(usize),
+    FrozenBinder { is_now_frozen: bool, cookie: usize },
     DeadReply,
     SpawnLooper,
     AcquireStrong(ObjectRefLocal),
     ReleaseStrong(ObjectRefLocal),
     AcquireWeak(ObjectRefLocal),
     ReleaseWeak(ObjectRefLocal),
+    FrozenTarget,
 }
 
 impl<'buf> Iterator for RetIterator<'buf> {
@@ -176,11 +180,44 @@ impl<'buf> Iterator for RetIterator<'buf> {
                 );
                 RetVal::ReleaseWeak(ObjectRefLocal { data, extra_data })
             }
-            libbinder_sys::commands::ReturnVal::ClearDeathNotificationDone => todo!(),
-            libbinder_sys::commands::ReturnVal::FrozenReply => todo!(),
+            libbinder_sys::commands::ReturnVal::ClearDeathNotificationDone => {
+                advance_bytes = size_of::<BinderUsize>();
+                let ret = BinderUsize::from_ne_bytes(
+                    <[u8; size_of::<BinderUsize>()]>::try_from(
+                        &payload[..size_of::<BinderUsize>()],
+                    )
+                    .expect("Cannot read cookie for clear death binder notification done"),
+                );
+                RetVal::ClearDeathNotificationDone(usize::try_from(ret).unwrap())
+            }
+            libbinder_sys::commands::ReturnVal::ClearFreezeNotificationDone => {
+                advance_bytes = size_of::<BinderUsize>();
+                let ret = BinderUsize::from_ne_bytes(
+                    <[u8; size_of::<BinderUsize>()]>::try_from(
+                        &payload[..size_of::<BinderUsize>()],
+                    )
+                    .expect("Cannot read cookie for clear freeze binder notification done"),
+                );
+                RetVal::ClearFreezeNotificationDone(usize::try_from(ret).unwrap())
+            }
+            libbinder_sys::commands::ReturnVal::FrozenReply => {
+                advance_bytes = 0;
+                RetVal::FrozenTarget
+            }
             libbinder_sys::commands::ReturnVal::OneWaySpamSuspect => todo!(),
             libbinder_sys::commands::ReturnVal::TransactionPendingFrozen => todo!(),
-            libbinder_sys::commands::ReturnVal::FrozenBinder => todo!(),
+            libbinder_sys::commands::ReturnVal::FrozenBinder => {
+                advance_bytes = size_of::<BinderFrozenStateInfo>();
+                let ret = bytemuck::try_pod_read_unaligned::<BinderFrozenStateInfo>(
+                    &payload[..size_of::<BinderFrozenStateInfo>()],
+                )
+                .expect("Cannot read BinderFrozenStateInfo");
+
+                RetVal::FrozenBinder {
+                    is_now_frozen: ret.is_frozen != 0,
+                    cookie: ret.cookie,
+                }
+            }
         });
 
         self.buf = &self.buf[advance_bytes + 4..];

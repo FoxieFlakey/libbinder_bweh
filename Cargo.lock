@@ -143,6 +143,7 @@ version = "0.1.0"
 dependencies = [
  "aligned-vec",
  "anyhow",
+ "bytemuck",
  "either",
  "enumflags2",
  "libbinder-sys",

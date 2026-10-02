@@ -28,9 +28,11 @@ pub enum Command {
     ExitLooper = request_code_none!(BINDER_CMD_MAGIC, 13),
 
     // death notification
-    RequestDeathNotification = request_code_write!(BINDER_CMD_MAGIC, 14, size_of::<PtrCookieRaw>()),
-    ClearDeathNotification = request_code_write!(BINDER_CMD_MAGIC, 15, size_of::<PtrCookieRaw>()),
-    DeathNotificationDone = request_code_write!(BINDER_CMD_MAGIC, 16, size_of::<PtrCookieRaw>()),
+    RequestDeathNotification =
+        request_code_write!(BINDER_CMD_MAGIC, 14, size_of::<HandleCookieRaw>()),
+    ClearDeathNotification =
+        request_code_write!(BINDER_CMD_MAGIC, 15, size_of::<HandleCookieRaw>()),
+    DeathNotificationDone = request_code_write!(BINDER_CMD_MAGIC, 16, size_of::<BinderUsize>()),
 
     SendTransactionSG =
         request_code_write!(BINDER_CMD_MAGIC, 17, size_of::<TransactionDataSgRaw>()),
@@ -38,9 +40,10 @@ pub enum Command {
 
     // Freeze notification
     RequestFreezeNotification =
-        request_code_write!(BINDER_CMD_MAGIC, 19, size_of::<PtrCookieRaw>()),
-    ClearFreezeNotification = request_code_write!(BINDER_CMD_MAGIC, 20, size_of::<PtrCookieRaw>()),
-    FreezeNotificationDone = request_code_write!(BINDER_CMD_MAGIC, 21, size_of::<PtrCookieRaw>()),
+        request_code_write!(BINDER_CMD_MAGIC, 19, size_of::<HandleCookieRaw>()),
+    ClearFreezeNotification =
+        request_code_write!(BINDER_CMD_MAGIC, 20, size_of::<HandleCookieRaw>()),
+    FreezeNotificationDone = request_code_write!(BINDER_CMD_MAGIC, 21, size_of::<BinderUsize>()),
 }
 
 impl Command {
@@ -55,6 +58,13 @@ const BINDER_RET_MAGIC: u8 = b'r';
 #[repr(C)]
 pub struct PtrCookieRaw {
     pub ptr: BinderUsize,
+    pub cookie: BinderUsize,
+}
+
+#[derive(Pod, Zeroable, Clone, Copy)]
+#[repr(C, packed)]
+pub struct HandleCookieRaw {
+    pub handle: u32,
     pub cookie: BinderUsize,
 }
 
@@ -96,6 +106,8 @@ pub enum ReturnVal {
         21,
         size_of::<crate::BinderFrozenStateInfo>()
     ),
+    ClearFreezeNotificationDone =
+        request_code_read!(BINDER_RET_MAGIC, 22, size_of::<BinderUsize>()),
 }
 
 impl ReturnVal {

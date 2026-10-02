@@ -13,6 +13,30 @@ pub struct Proxy {
     pub(crate) reference: Either<Arc<B<dyn ObjectTrait>>, ObjectRefRemote>,
 }
 
+impl Clone for Proxy {
+    fn clone(&self) -> Self {
+        if let Either::Right(remote) = &self.reference {
+            // We need to notify kernel that the local reference is cloned
+            self.rt.upgrade().unwrap().inc_remote_ref(remote);
+        }
+
+        Self {
+            rt: self.rt.clone(),
+            reference: self.reference.clone(),
+        }
+    }
+}
+
+impl PartialEq for Proxy {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.reference, &other.reference) {
+            (Either::Left(a), Either::Left(b)) => Arc::ptr_eq(a, b),
+            (Either::Left(_), Either::Right(_)) | (Either::Right(_), Either::Left(_)) => false,
+            (Either::Right(a), Either::Right(b)) => a == b,
+        }
+    }
+}
+
 impl Drop for Proxy {
     fn drop(&mut self) {
         let Some(rt) = self.rt.upgrade() else {

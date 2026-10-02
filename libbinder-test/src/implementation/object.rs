@@ -20,6 +20,10 @@ impl ImplObject {
     pub fn new(runtime: Weak<Runtime>, derived: Weak<B<dyn IObject>>) -> Self {
         Self(runtime, derived)
     }
+
+    pub fn get_derived(&self) -> &Weak<B<dyn IObject>> {
+        &self.1
+    }
 }
 
 impl ObjectTrait for ImplObject {

@@ -6,7 +6,10 @@ use std::{
     os::fd::{AsFd, OwnedFd},
     panic,
     path::Path,
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicU64, Ordering},
+    },
     thread::{self, JoinHandle, ThreadId},
 };
 
@@ -48,12 +51,15 @@ pub mod proxy;
 mod return_parser;
 
 pub struct Runtime {
+    id: u64,
     binder_dev: Arc<OwnedFd>,
     shutdown_pipe: Arc<Pipe<bool>>,
     threads: Mutex<HashMap<ThreadId, JoinHandle<()>>>,
     manager: OnceLock<Arc<B<dyn ObjectTrait>>>,
     local_objects: Slab<Arc<B<dyn ObjectTrait>>>,
     identity_stack: ThreadLocal<RefCell<Vec<CallerIdentity>>>,
+    death_callbacks: Slab<Mutex<Option<Box<dyn FnOnce() + Send>>>>,
+    freeze_callbacks: Slab<Mutex<Option<Box<dyn FnOnce(bool) + Send>>>>,
     _mmap: Mmap,
 }
 
@@ -83,6 +89,15 @@ pub enum ContextManagerInfo {
     Remote(Box<dyn FnOnce(Proxy) -> anyhow::Result<Arc<B<dyn ObjectTrait>>>>),
 }
 
+pub struct DeathNotificationToken {
+    runtime_id: u64,
+    index: usize,
+}
+pub struct FreezeNotificationToken {
+    runtime_id: u64,
+    index: usize,
+}
+
 impl Runtime {
     pub fn new<P>(path: P, context_manager: ContextManagerInfo) -> anyhow::Result<Arc<Runtime>>
     where
@@ -96,7 +111,9 @@ impl Runtime {
         let shutdown_pipe = Arc::new(Pipe::new().context("Creating shutdown pipe")?);
         let mmap = Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
             .context("Trying to map buffer for binder")?;
+        static ID: AtomicU64 = AtomicU64::new(0);
         let rt = Arc::new(Self {
+            id: ID.fetch_add(1, Ordering::Relaxed),
             _mmap: mmap,
             binder_dev: dev.clone(),
             shutdown_pipe: shutdown_pipe.clone(),
@@ -104,6 +121,8 @@ impl Runtime {
             threads: Mutex::new(HashMap::new()),
             local_objects: Slab::new(),
             identity_stack: ThreadLocal::new(),
+            death_callbacks: Slab::new(),
+            freeze_callbacks: Slab::new(),
         });
 
         // Context manager may want to perform calls to remote too
@@ -282,6 +301,7 @@ impl Runtime {
                     reply = Some((code, Packet::from_kernel(self.clone(), kernel)));
                 }
                 return_parser::RetVal::DeadReply => err = Some(TransactionError::TargetDied),
+                return_parser::RetVal::FrozenTarget => err = Some(TransactionError::TargetFrozen),
                 _ => unreachable!(),
             });
 
@@ -336,6 +356,106 @@ impl Runtime {
                 sender_pid: getpid(),
                 sender_security_ctx: None,
             })
+    }
+
+    // NOTE: This is no-op on local object, so it returns None
+    // else return Some(token). Token can be used to unregister
+    pub fn attach_death_callback<T: ObjectTrait + ?Sized, F: FnOnce() + Send + 'static>(
+        &self,
+        remote: &Arc<B<T>>,
+        callback: F,
+    ) -> Option<DeathNotificationToken> {
+        remote.get_remote().map(|x| {
+            let mut remote = x
+                .reference
+                .clone()
+                .right()
+                .expect("get_remote returns local proxy when it must not");
+            remote.extra_local_data = self
+                .death_callbacks
+                .insert(Mutex::new(Some(Box::new(callback))))
+                .unwrap();
+
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&Command::RequestDeathNotification.as_bytes());
+            buf.extend_from_slice(&remote.data_handle.to_ne_bytes());
+            buf.extend_from_slice(&remote.extra_local_data.to_ne_bytes());
+            self.do_read_write(&buf, &mut [])
+                .expect("Cannot request death notification");
+
+            DeathNotificationToken {
+                runtime_id: self.id,
+                index: remote.extra_local_data,
+            }
+        })
+    }
+
+    pub fn detach_death_callback(
+        &self,
+        token: DeathNotificationToken,
+    ) -> Box<dyn FnOnce() + Send + 'static> {
+        assert!(
+            token.runtime_id == self.id,
+            "attempting to detach death callback belonging to other runtime"
+        );
+
+        self.death_callbacks
+            .take(token.index)
+            .unwrap()
+            .get_mut()
+            .unwrap()
+            .take()
+            .unwrap()
+    }
+
+    // NOTE: This is no-op on local object, so it returns None
+    // else return Some(token). Token can be used to unregister
+    pub fn attach_freeze_callback<T: ObjectTrait + ?Sized, F: FnOnce(bool) + Send + 'static>(
+        &self,
+        remote: &Arc<B<T>>,
+        callback: F,
+    ) -> Option<FreezeNotificationToken> {
+        remote.get_remote().map(|x| {
+            let mut remote = x
+                .reference
+                .clone()
+                .right()
+                .expect("get_remote returns local proxy when it must not");
+            remote.extra_local_data = self
+                .freeze_callbacks
+                .insert(Mutex::new(Some(Box::new(callback))))
+                .unwrap();
+
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&Command::RequestDeathNotification.as_bytes());
+            buf.extend_from_slice(&remote.data_handle.to_ne_bytes());
+            buf.extend_from_slice(&remote.extra_local_data.to_ne_bytes());
+            self.do_read_write(&buf, &mut [])
+                .expect("Cannot request freeze notification");
+
+            FreezeNotificationToken {
+                runtime_id: self.id,
+                index: remote.extra_local_data,
+            }
+        })
+    }
+
+    pub fn detach_freeze_callback(
+        &self,
+        token: FreezeNotificationToken,
+    ) -> Box<dyn FnOnce(bool) + Send + 'static> {
+        assert!(
+            token.runtime_id == self.id,
+            "attempting to detach freeze callback belonging to other runtime"
+        );
+
+        self.freeze_callbacks
+            .take(token.index)
+            .unwrap()
+            .get_mut()
+            .unwrap()
+            .take()
+            .unwrap()
     }
 
     // handle transaction that comes
@@ -433,7 +553,6 @@ impl Runtime {
                 return_parser::RetVal::Transaction(Transaction::KernelManaged(transaction)) => {
                     self.handle_transaction(transaction);
                 }
-                return_parser::RetVal::DeadBinder(_) => (),
                 return_parser::RetVal::SpawnLooper => {
                     self.spawn_looper(true);
                 }
@@ -503,6 +622,51 @@ impl Runtime {
                             .take(data)
                             .expect("Cannot remove local object");
                     }
+                }
+                return_parser::RetVal::ClearDeathNotificationDone(cookie) => {
+                    let _ = self
+                        .death_callbacks
+                        .take(cookie)
+                        .expect("Unknown death callback");
+                }
+                return_parser::RetVal::ClearFreezeNotificationDone(cookie) => {
+                    let _ = self
+                        .freeze_callbacks
+                        .take(cookie)
+                        .expect("Unknown freeze callback");
+                }
+                return_parser::RetVal::DeadBinder(cookie) => {
+                    self.death_callbacks
+                        .take(cookie)
+                        .expect("Unknown death callback")
+                        .get_mut()
+                        .unwrap()
+                        .take()
+                        .unwrap()();
+
+                    let mut buf = Vec::new();
+                    buf.extend_from_slice(&Command::DeathNotificationDone.as_bytes());
+                    buf.extend_from_slice(&cookie.to_ne_bytes());
+                    self.do_read_write(&buf, &mut [])
+                        .expect("Cannot send death notification done");
+                }
+                return_parser::RetVal::FrozenBinder {
+                    is_now_frozen,
+                    cookie,
+                } => {
+                    self.freeze_callbacks
+                        .take(cookie)
+                        .expect("Unknown frozen callback")
+                        .get_mut()
+                        .unwrap()
+                        .take()
+                        .unwrap()(is_now_frozen);
+
+                    let mut buf = Vec::new();
+                    buf.extend_from_slice(&Command::FreezeNotificationDone.as_bytes());
+                    buf.extend_from_slice(&cookie.to_ne_bytes());
+                    self.do_read_write(&buf, &mut [])
+                        .expect("Cannot send freeze notification done");
                 }
                 x => handler(x),
             }
