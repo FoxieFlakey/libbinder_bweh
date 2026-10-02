@@ -170,7 +170,7 @@ fn drop_objects(runtime: &Arc<Runtime>, data: &[u8], offsets: &[usize]) {
                 "Kernel pull reference form nowhere :<"
             );
         }
-        ObjectParsed::RemoteReference(_) => (),
+        ObjectParsed::RemoteReference(x) => runtime.dec_remote_ref(&x),
         // Packet dont own the references here... the caller does
         ObjectParsed::ByteBuffer(_) => (),
     });

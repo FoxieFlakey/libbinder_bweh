@@ -106,6 +106,14 @@ impl Writer {
 
         // Special handling if its remote
         if let Some(remote) = reference.get_remote() {
+            // We also 'clone' ownership of the remote reference
+            self.runtime.inc_remote_ref(
+                &remote
+                    .reference
+                    .as_ref()
+                    .right()
+                    .expect("get_remote returned local proxy instead of remote"),
+            );
             remote
                 .reference
                 .as_ref()
