@@ -23,7 +23,6 @@ use libbinder_sys::{
     write_read::binder_read_write,
 };
 use nix::{
-    errno::Errno,
     fcntl::{OFlag, open},
     poll::{PollFd, PollFlags, PollTimeout, poll},
     sys::stat::Mode,
@@ -181,43 +180,18 @@ impl Runtime {
 
     pub(crate) fn do_read_write(
         &self,
-        mut write_buf: &[u8],
-        mut read_buf: &mut [u8],
+        write_buf: &[u8],
+        read_buf: &mut [u8],
     ) -> anyhow::Result<usize> {
-        if true {
-            match binder_read_write(self.binder_dev.as_fd(), &write_buf, read_buf) {
-                Ok((write_size, read_count)) => {
-                    assert!(
-                        write_size == write_buf.len(),
-                        "kernel didnt process everything"
-                    );
-                    return Ok(read_count);
-                }
-                Err((e, ..)) => return Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
+        match binder_read_write(self.binder_dev.as_fd(), &write_buf, read_buf) {
+            Ok((write_size, read_count)) => {
+                assert!(
+                    write_size == write_buf.len(),
+                    "kernel didnt process everything"
+                );
+                return Ok(read_count);
             }
-        }
-
-        let mut total_read_bytes = 0;
-        loop {
-            let mut pollfd = [PollFd::new(
-                self.binder_dev.as_fd(),
-                PollFlags::POLLIN | PollFlags::POLLOUT,
-            )];
-
-            poll(&mut pollfd, PollTimeout::NONE)
-                .context("Cannot poll until binder device is ready")?;
-
-            if !pollfd[0].revents().unwrap().is_empty() {
-                match binder_read_write(self.binder_dev.as_fd(), &write_buf, read_buf) {
-                    Ok((_, read_count)) => return Ok(total_read_bytes + read_count),
-                    Err((Errno::EAGAIN, (write_bytes, read_bytes))) => {
-                        write_buf = &write_buf[write_bytes..];
-                        read_buf = &mut read_buf[read_bytes..];
-                        total_read_bytes += read_bytes;
-                    }
-                    Err((e, ..)) => return Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
-                }
-            }
+            Err((e, ..)) => return Err(anyhow!("Cannot do BINDER_WRITE_READ: {e}")),
         }
     }
 
