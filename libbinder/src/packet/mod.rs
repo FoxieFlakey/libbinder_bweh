@@ -188,7 +188,7 @@ fn drop_objects(runtime: &Arc<Runtime>, data: &[u8], offsets: &[usize]) {
             );
         }
         ObjectParsed::RemoteReference(x) => runtime.dec_remote_ref(&x),
-        // Packet dont own the references here... the caller does
+        // Packet has the Rust owned, so it handles the dropping of buffers themselves
         ObjectParsed::ByteBuffer(_) => (),
     });
 }
