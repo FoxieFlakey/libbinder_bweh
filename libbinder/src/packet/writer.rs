@@ -66,6 +66,13 @@ impl Writer {
     }
 
     pub fn finish(mut self) -> Packet {
+        let mut buffers_size = mem::take(&mut self.buffers_size);
+        // PRETTY random but required in https://github.com/torvalds/linux/blob/ce1e0223d8ad4211275c82a17ed6d43ab81e13d9/drivers/android/binder.c#L3458
+        // its checked
+        if !buffers_size.is_multiple_of(size_of::<u64>()) {
+            buffers_size = buffers_size.next_multiple_of(size_of::<u64>())
+        }
+
         Packet {
             runtime: self.runtime.clone(),
             is_sent: false,
@@ -74,7 +81,7 @@ impl Writer {
                 offsets: mem::take(&mut self.offsets),
                 byte_bufs: mem::take(&mut self.byte_bufs),
             }),
-            buffers_size: mem::take(&mut self.buffers_size),
+            buffers_size,
         }
     }
 
