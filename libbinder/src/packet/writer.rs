@@ -97,6 +97,11 @@ impl Writer {
             self.data.len().is_multiple_of(4),
             "Binder objects must be at offset of multiple of four"
         );
+        if !bytes.as_ref().len().is_multiple_of(size_of::<u64>()) {
+            todo!(
+                "Maybe bounce buffers and a warning or smth. kernel requires it aligned to 8 bytes"
+            )
+        }
 
         let raw = Buffer {
             buffer: bytes.as_ref(),
