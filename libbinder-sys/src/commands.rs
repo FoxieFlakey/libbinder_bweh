@@ -28,19 +28,19 @@ pub enum Command {
     ExitLooper = request_code_none!(BINDER_CMD_MAGIC, 13),
 
     // death notification
-    RequestDeathNotification = request_code_write!(BINDER_RET_MAGIC, 14, size_of::<PtrCookieRaw>()),
-    ClearDeathNotification = request_code_write!(BINDER_RET_MAGIC, 15, size_of::<PtrCookieRaw>()),
-    DeathNotificationDone = request_code_write!(BINDER_RET_MAGIC, 16, size_of::<PtrCookieRaw>()),
+    RequestDeathNotification = request_code_write!(BINDER_CMD_MAGIC, 14, size_of::<PtrCookieRaw>()),
+    ClearDeathNotification = request_code_write!(BINDER_CMD_MAGIC, 15, size_of::<PtrCookieRaw>()),
+    DeathNotificationDone = request_code_write!(BINDER_CMD_MAGIC, 16, size_of::<PtrCookieRaw>()),
 
     SendTransactionSG =
-        request_code_write!(BINDER_RET_MAGIC, 17, size_of::<TransactionDataSgRaw>()),
-    SendReplySG = request_code_write!(BINDER_RET_MAGIC, 18, size_of::<TransactionDataSgRaw>()),
+        request_code_write!(BINDER_CMD_MAGIC, 17, size_of::<TransactionDataSgRaw>()),
+    SendReplySG = request_code_write!(BINDER_CMD_MAGIC, 18, size_of::<TransactionDataSgRaw>()),
 
     // Freeze notification
     RequestFreezeNotification =
-        request_code_write!(BINDER_RET_MAGIC, 19, size_of::<PtrCookieRaw>()),
-    ClearFreezeNotification = request_code_write!(BINDER_RET_MAGIC, 20, size_of::<PtrCookieRaw>()),
-    FreezeNotificationDone = request_code_write!(BINDER_RET_MAGIC, 21, size_of::<PtrCookieRaw>()),
+        request_code_write!(BINDER_CMD_MAGIC, 19, size_of::<PtrCookieRaw>()),
+    ClearFreezeNotification = request_code_write!(BINDER_CMD_MAGIC, 20, size_of::<PtrCookieRaw>()),
+    FreezeNotificationDone = request_code_write!(BINDER_CMD_MAGIC, 21, size_of::<PtrCookieRaw>()),
 }
 
 impl Command {
