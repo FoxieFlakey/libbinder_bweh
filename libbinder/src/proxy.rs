@@ -26,9 +26,8 @@ impl Drop for Proxy {
             let mut buf = Vec::new();
             buf.extend_from_slice(&Command::Release.as_bytes());
             buf.extend_from_slice(&x.data_handle.to_ne_bytes());
-            buf.extend_from_slice(&(0usize).to_ne_bytes());
             rt.do_read_write(&buf, &mut [])
-                .expect("Cannot send BC_RELEASE for local reference");
+                .expect("Cannot send BC_RELEASE for remote reference");
         }
     }
 }
@@ -49,9 +48,8 @@ impl Proxy {
                             let mut buf = Vec::new();
                             buf.extend_from_slice(&Command::Release.as_bytes());
                             buf.extend_from_slice(&remote_ref.data_handle.to_ne_bytes());
-                            buf.extend_from_slice(&(0usize).to_ne_bytes());
                             rt.do_read_write(&buf, &mut [])
-                                .expect("Cannot send BC_RELEASE for local reference");
+                                .expect("Cannot send BC_RELEASE for remote reference");
                         })
                         .expect(".get_remote returns non remote reference!"),
                 ),

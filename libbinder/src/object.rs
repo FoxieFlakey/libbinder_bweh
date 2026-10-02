@@ -8,6 +8,7 @@ use std::{
 use crate::{Runtime, packet::Packet, proxy::Proxy};
 use enumflags2::{BitFlags, bitflags};
 use libbinder_sys::transaction::TransactionFlag;
+use nix::unistd::{Pid, Uid};
 
 #[derive(Default, Clone, Copy)]
 pub struct ObjectFlags {
@@ -90,9 +91,10 @@ pub struct B<T: ObjectTrait + ?Sized> {
     inner: T,
 }
 
+#[derive(Clone)]
 pub struct CallerIdentity {
-    pub sender_euid: u32,
-    pub sender_pid: i32,
+    pub sender_euid: Uid,
+    pub sender_pid: Pid,
     pub sender_security_ctx: Option<CString>,
 }
 

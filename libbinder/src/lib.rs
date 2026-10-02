@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     ffi::CString,
     os::fd::{AsFd, OwnedFd},
@@ -24,12 +25,14 @@ use nix::{
     fcntl::{OFlag, open},
     poll::{PollFd, PollFlags, PollTimeout, poll},
     sys::stat::Mode,
+    unistd::{Pid, Uid, geteuid, getpid},
 };
 use sharded_slab::Slab;
+use thread_local::ThreadLocal;
 
 use crate::{
     mmap::Mmap,
-    object::{B, ObjectTrait},
+    object::{B, CallerIdentity, ObjectTrait},
     packet::Packet,
     pipe::Pipe,
     proxy::Proxy,
@@ -49,6 +52,7 @@ pub struct Runtime {
     threads: Mutex<HashMap<ThreadId, JoinHandle<()>>>,
     manager: OnceLock<Arc<B<dyn ObjectTrait>>>,
     local_objects: Slab<Arc<B<dyn ObjectTrait>>>,
+    identity_stack: ThreadLocal<RefCell<Vec<CallerIdentity>>>,
     _mmap: Mmap,
 }
 
@@ -98,6 +102,7 @@ impl Runtime {
             manager: OnceLock::new(),
             threads: Mutex::new(HashMap::new()),
             local_objects: Slab::new(),
+            identity_stack: ThreadLocal::new(),
         });
 
         // Context manager may want to perform calls to remote too
@@ -332,6 +337,34 @@ impl Runtime {
         Ok(reply)
     }
 
+    fn push_identity(&self, identity: CallerIdentity) {
+        self.identity_stack
+            .get_or_default()
+            .borrow_mut()
+            .push(identity);
+    }
+
+    fn pop_identity(&self) {
+        self.identity_stack
+            .get_or_default()
+            .borrow_mut()
+            .pop()
+            .expect("Unbalanced transaction stack?");
+    }
+
+    pub fn get_caller_identity(&self) -> CallerIdentity {
+        self.identity_stack
+            .get_or_default()
+            .borrow_mut()
+            .last()
+            .map(|x| x.clone())
+            .unwrap_or_else(|| CallerIdentity {
+                sender_euid: geteuid(),
+                sender_pid: getpid(),
+                sender_security_ctx: None,
+            })
+    }
+
     // handle transaction that comes
     fn handle_transaction(self: &Arc<Runtime>, transaction: TransactionKernelManaged) {
         let target = match transaction.get_data().target {
@@ -341,11 +374,12 @@ impl Runtime {
             }
         };
 
-        let caller_identity = object::CallerIdentity {
-            sender_euid: transaction.get_data().sender_euid,
-            sender_pid: transaction.get_data().sender_pid,
+        self.push_identity(object::CallerIdentity {
+            sender_euid: Uid::from_raw(transaction.get_data().sender_euid),
+            sender_pid: Pid::from_raw(transaction.get_data().sender_pid),
             sender_security_ctx: transaction.get_data().secctx.map(CString::from),
-        };
+        });
+
         let code = transaction.get_data().code;
         let flags = object::Flag::from_raw(transaction.get_data().flags);
         let mut packet = Packet::from_kernel(self.clone(), transaction);
@@ -356,9 +390,11 @@ impl Runtime {
         }
 
         let (reply_code, reply) = meta
-            .on_transaction(code, flags, &mut packet, Some(caller_identity))
+            .on_transaction(code, flags, &mut packet, Some(self.get_caller_identity()))
             .expect("Cannot perform transaction");
         drop(packet);
+
+        self.pop_identity();
 
         if flags.contains(object::Flag::OneWay) {
             // no need to handle replying
