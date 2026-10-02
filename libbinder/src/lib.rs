@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     ffi::CString,
+    io,
     os::fd::{AsFd, OwnedFd},
     panic,
     path::Path,
@@ -9,7 +10,7 @@ use std::{
     thread::{self, JoinHandle, ThreadId},
 };
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow};
 use either::Either;
 use enumflags2::BitFlags;
 use libbinder_sys::{
@@ -32,7 +33,7 @@ use thread_local::ThreadLocal;
 
 use crate::{
     mmap::Mmap,
-    object::{B, CallerIdentity, ObjectTrait},
+    object::{B, CallerIdentity, ObjectTrait, TransactionError},
     packet::Packet,
     pipe::Pipe,
     proxy::Proxy,
@@ -229,7 +230,7 @@ impl Runtime {
         flags: BitFlags<object::Flag>,
         packet: &mut Packet,
         target: ObjectRefRemote,
-    ) -> anyhow::Result<Option<(u32, Packet)>> {
+    ) -> Result<Option<(u32, Packet)>, TransactionError> {
         let flags_out = object::Flag::into_raw(flags);
         let is_one_way = flags.contains(object::Flag::OneWay);
 
@@ -250,7 +251,7 @@ impl Runtime {
         write_buf.extend_from_slice(&Command::SendTransaction.as_bytes());
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
         self.do_read_write(&write_buf, &mut [])
-            .context("Cannot send packet")?;
+            .expect("Cannot perform BINDER_WRITE_READ to send transaction");
         unsafe { packet.objects_sent() };
         drop(write_buf);
 
@@ -261,21 +262,19 @@ impl Runtime {
         loop {
             let bytes_read = self
                 .do_read_write(&[], &mut ret_buf)
-                .context("Cannot wait for reply/transaction complete")?;
+                .expect("Cannot perform BINDER_WRITE_READ to wait for result");
             let read = &ret_buf[0..bytes_read];
 
             // SAFETY: Kernel jsut wrote it
             let mut err = None;
             self.handle_ret_values(unsafe { RetIterator::new(&read) }, |ret| match ret {
                 return_parser::RetVal::Err(e) => {
-                    err = Some(anyhow::anyhow!(
-                        "Error sending packet (kernel returned BR_ERROR): {e}"
-                    ));
+                    err = Some(TransactionError::KernelError(io::Error::from_raw_os_error(
+                        e,
+                    )));
                 }
                 return_parser::RetVal::FailedTransaction => {
-                    err = Some(anyhow::anyhow!(
-                        "Kernel cannot send transaction for some reason, See dmesg"
-                    ));
+                    err = Some(TransactionError::KernelCantSend);
                 }
                 return_parser::RetVal::Ok => panic!("Not expecting BR_OK"),
                 return_parser::RetVal::TransactionComplete => {
@@ -297,13 +296,14 @@ impl Runtime {
                         }
                     };
 
-                    if reply.is_some() {
-                        err = Some(anyhow!("Kernel sent double reply??"));
-                    }
+                    assert!(
+                        reply.is_none(),
+                        "Kernely sent double BR_REPLY when it should not"
+                    );
 
                     reply = Some((code, Packet::from_kernel(self.clone(), kernel)));
                 }
-                return_parser::RetVal::DeadReply => err = Some(anyhow!("Target died")),
+                return_parser::RetVal::DeadReply => err = Some(TransactionError::TargetDied),
                 _ => unreachable!(),
             });
 
@@ -321,9 +321,12 @@ impl Runtime {
         }
 
         if !is_one_way && reply.is_none() {
-            bail!("Remote didnt send reply")
+            // If we not set oneway flag, kernel CANNOT return
+            // succesful transaction IF it doesn't provide BR_REPLY
+            panic!("Unexpected missing reply for non one way transaction")
         } else if is_one_way && reply.is_some() {
-            bail!("Remote sent reply for one way transactions")
+            // If we set oneway flag, kernel CANNOT return BR_REPLY
+            panic!("Received unexpected reply for one way transactions")
         }
 
         Ok(reply)
@@ -381,7 +384,9 @@ impl Runtime {
             panic!("Attempting to handle transaction on object that was already removed")
         }
 
-        let ret = meta.on_transaction(code, flags, &mut packet);
+        let ret = meta
+            .on_transaction(code, flags, &mut packet)
+            .expect("Local on_transaction cannot return Err");
         drop(packet);
 
         self.pop_identity();

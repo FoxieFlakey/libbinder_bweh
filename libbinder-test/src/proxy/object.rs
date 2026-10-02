@@ -1,8 +1,12 @@
 use std::sync::Weak;
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use enumflags2::BitFlags;
-use libbinder::{object::ObjectTrait, packet, proxy::Proxy};
+use libbinder::{
+    object::{ObjectTrait, TransactionError},
+    packet,
+    proxy::Proxy,
+};
 
 use crate::{
     interface::{
@@ -34,7 +38,7 @@ impl ObjectTrait for ObjectProxy {
         code: u32,
         flags: enumflags2::BitFlags<libbinder::object::Flag>,
         message: &mut libbinder::packet::Packet,
-    ) -> Option<(u32, libbinder::packet::Packet)> {
+    ) -> Result<Option<(u32, libbinder::packet::Packet)>, TransactionError> {
         self.0.on_transaction(code, flags, message)
     }
 }
@@ -49,6 +53,7 @@ impl IObject for ObjectProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));

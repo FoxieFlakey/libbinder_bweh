@@ -4,7 +4,7 @@ use anyhow::{Context, bail};
 use enumflags2::BitFlags;
 use libbinder::{
     Runtime,
-    object::{B, Flag, ObjectTrait},
+    object::{B, Flag, ObjectTrait, TransactionError},
     packet::{self, Packet},
     proxy::Proxy,
 };
@@ -48,7 +48,7 @@ impl ObjectTrait for IServiceManagerProxy {
         code: u32,
         flags: BitFlags<Flag>,
         message: &mut Packet,
-    ) -> Option<(u32, Packet)> {
+    ) -> Result<Option<(u32, Packet)>, TransactionError> {
         self.0.on_transaction(code, flags, message)
     }
 }
@@ -67,6 +67,7 @@ impl IServiceManager for IServiceManagerProxy {
                 BitFlags::default(),
                 &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));
@@ -82,6 +83,7 @@ impl IServiceManager for IServiceManagerProxy {
                 BitFlags::default(),
                 &mut packet::Writer::new(self.0.get_runtime().upgrade().unwrap()).finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));
@@ -101,6 +103,7 @@ impl IServiceManager for IServiceManagerProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));
@@ -119,6 +122,7 @@ impl IServiceManager for IServiceManagerProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));
@@ -137,6 +141,7 @@ impl IServiceManager for IServiceManagerProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));

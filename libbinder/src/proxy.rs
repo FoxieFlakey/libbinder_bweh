@@ -68,7 +68,7 @@ impl ObjectTrait for Proxy {
         code: u32,
         flags: enumflags2::BitFlags<crate::object::Flag>,
         message: &mut crate::packet::Packet,
-    ) -> Option<(u32, crate::packet::Packet)> {
+    ) -> Result<Option<(u32, crate::packet::Packet)>, crate::object::TransactionError> {
         match &self.reference {
             Either::Left(local) => local.on_transaction(code, flags, message),
             Either::Right(x) => {
@@ -77,7 +77,6 @@ impl ObjectTrait for Proxy {
                     .upgrade()
                     .expect("Runtime is not alive anymore for Binder proxy");
                 rt.send_packet(code, flags, message, *x)
-                    .expect("Cannot send transaction")
             }
         }
     }

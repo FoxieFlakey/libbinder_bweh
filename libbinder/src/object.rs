@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     ffi::CString,
+    io,
     ops::Deref,
     sync::{RwLock, Weak},
 };
@@ -68,6 +69,18 @@ impl Flag {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum TransactionError {
+    #[error("Target of this transaction is gone")]
+    TargetDied,
+    #[error("Target of this transaction is frozen")]
+    TargetFrozen,
+    #[error("Kernel cannot send this transaction")]
+    KernelCantSend,
+    #[error("Kernel has an error")]
+    KernelError(io::Error),
+}
+
 pub trait ObjectTrait: Sync + Send + Any + 'static {
     // only return if current object just proxy
     // to a remote. this is mainly so the remote
@@ -79,7 +92,7 @@ pub trait ObjectTrait: Sync + Send + Any + 'static {
         code: u32,
         flags: enumflags2::BitFlags<Flag>,
         message: &mut Packet,
-    ) -> Option<(u32, Packet)>;
+    ) -> Result<Option<(u32, Packet)>, TransactionError>;
 }
 
 pub struct B<T: ObjectTrait + ?Sized> {

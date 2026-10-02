@@ -4,7 +4,7 @@ use anyhow::{Context, bail};
 use enumflags2::BitFlags;
 use libbinder::{
     Runtime,
-    object::{Flag, ObjectTrait},
+    object::{Flag, ObjectTrait, TransactionError},
     packet::{self, Packet},
     proxy::Proxy,
 };
@@ -48,7 +48,7 @@ impl ObjectTrait for ICalculatorProxy {
         code: u32,
         flags: BitFlags<Flag>,
         message: &mut Packet,
-    ) -> Option<(u32, Packet)> {
+    ) -> Result<Option<(u32, Packet)>, TransactionError> {
         self.0.on_transaction(code, flags, message)
     }
 }
@@ -81,6 +81,7 @@ impl ICalculator for ICalculatorProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));
@@ -105,6 +106,7 @@ impl ICalculator for ICalculatorProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));
@@ -129,6 +131,7 @@ impl ICalculator for ICalculatorProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));
@@ -153,6 +156,7 @@ impl ICalculator for ICalculatorProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));
@@ -177,6 +181,7 @@ impl ICalculator for ICalculatorProxy {
                 BitFlags::default(),
                 &mut writer.finish(),
             )
+            .context("Cannot perform transaction")?
             .expect("This suppose be non oneway transaction");
         if code != REPLY_SUCCESS {
             return Err(proxy::decode_error(&packet));

@@ -8,7 +8,7 @@ use anyhow::{Context, anyhow, bail};
 use enumflags2::BitFlags;
 use libbinder::{
     Runtime,
-    object::{B, Flag, ObjectTrait},
+    object::{B, Flag, ObjectTrait, TransactionError},
     packet::{self, Packet},
     proxy::Proxy,
 };
@@ -70,7 +70,7 @@ impl ObjectTrait for ImplManager {
         code: u32,
         flags: BitFlags<Flag>,
         message: &mut Packet,
-    ) -> Option<(u32, Packet)> {
+    ) -> Result<Option<(u32, Packet)>, TransactionError> {
         let mut reader = message.reader();
         let response = match code {
             service_manager::REGISTER_CODE => match reader.read_reference() {
@@ -136,22 +136,22 @@ impl ObjectTrait for ImplManager {
         };
 
         match response {
-            Ok(Some(response)) => Some((REPLY_SUCCESS, response)),
+            Ok(Some(response)) => Ok(Some((REPLY_SUCCESS, response))),
             Ok(None) => {
                 assert!(
                     flags.contains(Flag::OneWay),
                     "Expecting reply, but got none"
                 );
-                None
+                Ok(None)
             }
             Err(e) => {
                 if flags.contains(Flag::OneWay) {
-                    return None;
+                    return Ok(None);
                 }
 
                 let mut writer = packet::Writer::new(self.get_runtime().upgrade().unwrap());
                 writer.write_bytes(format!("{e:#}"));
-                Some((REPLY_ERROR, writer.finish()))
+                Ok(Some((REPLY_ERROR, writer.finish())))
             }
         }
     }
