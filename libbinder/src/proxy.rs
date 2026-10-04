@@ -77,9 +77,9 @@ impl Proxy {
 impl ObjectTrait for Proxy {
     fn get_remote<'a>(&'a self) -> Option<&'a Proxy> {
         if self.reference.is_right() {
-            None
-        } else {
             Some(self)
+        } else {
+            None
         }
     }
 
