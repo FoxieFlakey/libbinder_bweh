@@ -37,14 +37,48 @@ pub fn main() {
         .downcast_ref::<IServiceManagerProxy>()
         .unwrap() as &dyn IServiceManager;
 
+    // service manager cannot fetch reference count for its own local object
+    // println!(
+    //     "Service manager got {} strong refs",
+    //     manager
+    //         .get_refcount(runtime.get_manager().clone())
+    //         .unwrap()
+    //         .0
+    // );
+    // println!(
+    //     "Service manager got {} weak refs",
+    //     manager
+    //         .get_refcount(runtime.get_manager().clone())
+    //         .unwrap()
+    //         .1
+    // );
+
     let calculator_service = manager
         .get_service(calculator::SERVICE_ID)
         .expect("Getting calculator service");
+    println!(
+        "Calculator service got {} strong refs",
+        manager.get_refcount(calculator_service.clone()).unwrap().0
+    );
+    println!(
+        "Calculator service got {} weak refs",
+        manager.get_refcount(calculator_service.clone()).unwrap().1
+    );
+
     let calculator = &ICalculatorProxy::from_proxy(Proxy::from_object(calculator_service)).unwrap()
         as &dyn ICalculator;
     let file_server_service = manager
         .get_service(file_server::SERVICE_ID)
         .expect("Getting file server service");
+    println!(
+        "File server service got {} strong refs",
+        manager.get_refcount(file_server_service.clone()).unwrap().0
+    );
+    println!(
+        "File server service got {} weak refs",
+        manager.get_refcount(file_server_service.clone()).unwrap().1
+    );
+
     let file_server = &IFileServerProxy::from_proxy(Proxy::from_object(file_server_service))
         .unwrap() as &dyn IFileServer;
 

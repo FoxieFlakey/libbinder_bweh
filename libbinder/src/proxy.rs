@@ -1,3 +1,5 @@
+use std::io;
+use std::os::fd::AsFd;
 use std::sync::{Arc, Weak};
 
 use either::Either;
@@ -70,6 +72,38 @@ impl Proxy {
                 rt: Arc::downgrade(&local.get_runtime()),
                 reference: Either::Left(local),
             },
+        }
+    }
+
+    // NOTE: This will only work if caller is context manager
+    // Returns None, if this proxy is not remote reference
+    pub fn get_remote_strong_count(&self) -> Result<Option<usize>, io::Error> {
+        match self.reference.as_ref() {
+            Either::Left(_) => Ok(None),
+            Either::Right(remote) => {
+                let info = libbinder_sys::binder_get_remote_node_info(
+                    self.rt.upgrade().unwrap().binder_dev.as_fd(),
+                    remote,
+                )?;
+
+                Ok(Some(info.strong_count.try_into().unwrap()))
+            }
+        }
+    }
+
+    // NOTE: This will only work if caller is context manager
+    // Returns None, if this proxy is not remote reference
+    pub fn get_remote_weak_count(&self) -> Result<Option<usize>, io::Error> {
+        match self.reference.as_ref() {
+            Either::Left(_) => Ok(None),
+            Either::Right(remote) => {
+                let info = libbinder_sys::binder_get_remote_node_info(
+                    self.rt.upgrade().unwrap().binder_dev.as_fd(),
+                    remote,
+                )?;
+
+                Ok(Some(info.strong_count.try_into().unwrap()))
+            }
         }
     }
 }

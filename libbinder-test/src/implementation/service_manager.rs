@@ -130,6 +130,20 @@ impl ObjectTrait for ImplManager {
 
                 ret.map(|_| Some(packet::Writer::new(self.get_runtime()).finish()))
             }
+            service_manager::GET_REF_COUNT_CODE => match reader.read_reference() {
+                Ok(proxy) => self
+                    .derived
+                    .upgrade()
+                    .unwrap()
+                    .get_refcount(Arc::new(B::new(proxy)))
+                    .map(|(strong, weak)| {
+                        let mut writer = packet::Writer::new(self.get_runtime());
+                        writer.write_bytes(&strong.to_ne_bytes());
+                        writer.write_bytes(&weak.to_ne_bytes());
+                        Some(writer.finish())
+                    }),
+                Err(e) => Err(anyhow!("Cannot read service reference: {e}")),
+            },
             _ => return self.base.on_transaction(code, flags, message),
         };
 
@@ -173,6 +187,23 @@ impl IServiceManager for ImplManager {
             })?;
         }
         Ok(())
+    }
+
+    fn get_refcount(&self, remote: Arc<B<dyn ObjectTrait>>) -> anyhow::Result<(usize, usize)> {
+        match remote.get_remote() {
+            Some(x) => {
+                let strong = x
+                    .get_remote_strong_count()
+                    .context("Getting strong count")?
+                    .expect("This already a remote");
+                let weak = x
+                    .get_remote_strong_count()
+                    .context("Getting strong count")?
+                    .expect("This already a remote");
+                Ok((strong, weak))
+            }
+            None => bail!("Cannot get reference count for service manager's objects"),
+        }
     }
 
     fn shutdown(&self) -> anyhow::Result<()> {

@@ -11,7 +11,7 @@ pub mod object;
 pub mod transaction;
 pub mod write_read;
 
-use crate::object::reference::ObjectRefLocal;
+use crate::{object::reference::ObjectRefLocal, types::reference::ObjectRefRemote};
 
 pub mod types {
     use crate::object;
@@ -32,7 +32,9 @@ pub struct Version {
 pub type BinderUsize = usize;
 
 mod ioctl {
-    use crate::{Version, object::reference::ObjectRefRaw, write_read::ReadWrite};
+    use crate::{
+        RemoteNodeInfoRaw, Version, object::reference::ObjectRefRaw, write_read::ReadWrite,
+    };
     use nix::{ioctl_readwrite, ioctl_write_ptr};
 
     const BINDER_IOC_MAGIC: u8 = b'b';
@@ -41,7 +43,14 @@ mod ioctl {
     const BINDER_IOC_SET_CONTEXT_MGR_EXT: u8 = 13;
     const BINDER_IOC_THREAD_EXIT: u8 = 8;
     const BINDER_IOC_SET_MAX_THREADS: u8 = 5;
+    const BINDER_IOC_GET_NODE_INFO_FOR_REF: u8 = 12;
 
+    ioctl_readwrite!(
+        ioctl_binder_get_remote_node_info_for_ref,
+        BINDER_IOC_MAGIC,
+        BINDER_IOC_GET_NODE_INFO_FOR_REF,
+        RemoteNodeInfoRaw
+    );
     ioctl_write_ptr!(
         ioctl_binder_set_max_threads,
         BINDER_IOC_MAGIC,
@@ -110,4 +119,39 @@ pub fn binder_exit_thread(fd: BorrowedFd) -> Result<(), Errno> {
 pub fn binder_set_max_threads(fd: BorrowedFd, mut count: u32) -> Result<(), Errno> {
     unsafe { ioctl::ioctl_binder_set_max_threads(fd.as_raw_fd(), &mut count) }?;
     Ok(())
+}
+
+// Equivalent to struct binder_node_info_for_ref
+#[repr(C)]
+struct RemoteNodeInfoRaw {
+    handle: u32,
+    strong_count: u32,
+    weak_count: u32,
+    reserved1: u32,
+    reserved2: u32,
+    reserved3: u32,
+}
+
+pub struct RemoteHandleInfo {
+    pub strong_count: u32,
+    pub weak_count: u32,
+}
+
+pub fn binder_get_remote_node_info(
+    fd: BorrowedFd,
+    remote: &ObjectRefRemote,
+) -> Result<RemoteHandleInfo, Errno> {
+    let mut raw = RemoteNodeInfoRaw {
+        handle: remote.data_handle,
+        strong_count: 0,
+        weak_count: 0,
+        reserved1: 0,
+        reserved2: 0,
+        reserved3: 0,
+    };
+    unsafe { ioctl::ioctl_binder_get_remote_node_info_for_ref(fd.as_raw_fd(), &mut raw) }?;
+    Ok(RemoteHandleInfo {
+        strong_count: raw.strong_count,
+        weak_count: raw.weak_count,
+    })
 }

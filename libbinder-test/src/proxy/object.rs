@@ -27,7 +27,11 @@ impl ObjectProxy {
 
 impl ObjectTrait for ObjectProxy {
     fn get_remote<'a>(&'a self) -> Option<&'a Proxy> {
-        Some(&self.0)
+        if self.0.get_remote().is_some() {
+            Some(&self.0)
+        } else {
+            None
+        }
     }
 
     fn get_runtime(&self) -> Arc<Runtime> {

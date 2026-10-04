@@ -76,6 +76,39 @@ impl IServiceManager for IServiceManagerProxy {
         Ok(())
     }
 
+    fn get_refcount(&self, remote: Arc<B<dyn ObjectTrait>>) -> anyhow::Result<(usize, usize)> {
+        let mut writer = packet::Writer::new(self.0.get_runtime());
+        writer.write_reference(remote);
+
+        let (code, packet) = self
+            .on_transaction(
+                service_manager::GET_REF_COUNT_CODE,
+                BitFlags::default(),
+                &mut writer.finish(),
+            )
+            .context("Cannot perform transaction")?
+            .expect("This suppose be non oneway transaction");
+        if code != REPLY_SUCCESS {
+            return Err(proxy::decode_error(&packet));
+        }
+
+        let mut strong_raw = [0; size_of::<usize>()];
+        let mut weak_raw = [0; size_of::<usize>()];
+
+        let mut reader = packet.reader();
+        reader
+            .read_bytes(&mut strong_raw)
+            .context("Cannot read strong count")?;
+        reader
+            .read_bytes(&mut weak_raw)
+            .context("Cannot read weak count")?;
+
+        Ok((
+            usize::from_ne_bytes(strong_raw),
+            usize::from_ne_bytes(weak_raw),
+        ))
+    }
+
     fn health_check(&self) -> anyhow::Result<()> {
         let (code, packet) = self
             .on_transaction(
