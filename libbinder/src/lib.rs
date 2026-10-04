@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    cmp,
     collections::HashMap,
     ffi::CString,
     io,
@@ -108,6 +109,13 @@ impl Runtime {
                 .context("Opening binder dev")?,
         );
 
+        let version = libbinder_sys::binder_version(dev.as_fd())
+            .context("Cannot get kernel's Binder version")?
+            .version;
+        if version != libbinder_sys::BINDER_COMPILED_VERSION.version {
+            bail!("Unsupported binder version: {version}");
+        }
+
         let shutdown_pipe = Arc::new(Pipe::new().context("Creating shutdown pipe")?);
         let mmap = Mmap::new(dev.as_fd(), BINDER_BUFFER_SIZE)
             .context("Trying to map buffer for binder")?;
@@ -124,6 +132,7 @@ impl Runtime {
             death_callbacks: Slab::new(),
             freeze_callbacks: Slab::new(),
         });
+        rt.set_max_threads(16);
 
         // Context manager may want to perform calls to remote too
         // and remote may calls back
@@ -195,6 +204,22 @@ impl Runtime {
                 .is_none(),
             "Must not exist already"
         );
+    }
+
+    pub fn set_max_threads(&self, count: usize) {
+        // Atleast one thread is needed
+        let total = cmp::max(count, 1);
+        let num_kernel_spawnable = total - 1;
+        libbinder_sys::binder_set_max_threads(
+            self.binder_dev.as_fd(),
+            u32::try_from(num_kernel_spawnable).unwrap(),
+        )
+        .expect("BINDER_SET_MAX_THREADS ioctl should not fail");
+    }
+
+    fn exit_thread(&self) {
+        libbinder_sys::binder_exit_thread(self.binder_dev.as_fd())
+            .expect("BINDER_THREAD_EXIT ioctl should not fail");
     }
 
     pub(crate) fn do_read_write(
@@ -756,6 +781,7 @@ fn worker(
     if let Err(e) = ret {
         if let Some(x) = runtime.upgrade() {
             x.exit_looper();
+            x.exit_thread();
             x.worker_died(thread::current().id());
         }
         panic::resume_unwind(e);
@@ -763,5 +789,6 @@ fn worker(
 
     if let Some(x) = runtime.upgrade() {
         x.exit_looper();
+        x.exit_thread();
     }
 }

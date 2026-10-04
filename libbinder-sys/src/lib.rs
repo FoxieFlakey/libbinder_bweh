@@ -39,7 +39,21 @@ mod ioctl {
     const BINDER_IOC_TYPE_WRITE_READ: u8 = 1;
     const BINDER_IOC_TYPE_VERSION: u8 = 9;
     const BINDER_IOC_SET_CONTEXT_MGR_EXT: u8 = 13;
+    const BINDER_IOC_THREAD_EXIT: u8 = 8;
+    const BINDER_IOC_SET_MAX_THREADS: u8 = 5;
 
+    ioctl_write_ptr!(
+        ioctl_binder_set_max_threads,
+        BINDER_IOC_MAGIC,
+        BINDER_IOC_SET_MAX_THREADS,
+        u32
+    );
+    ioctl_write_ptr!(
+        ioctl_binder_thread_exit,
+        BINDER_IOC_MAGIC,
+        BINDER_IOC_THREAD_EXIT,
+        i32
+    );
     ioctl_readwrite!(
         ioctl_binder_version,
         BINDER_IOC_MAGIC,
@@ -86,4 +100,14 @@ pub fn binder_version(fd: BorrowedFd) -> Result<Version, Errno> {
     let mut ver = BINDER_COMPILED_VERSION;
     unsafe { ioctl::ioctl_binder_version(fd.as_raw_fd(), &mut ver) }?;
     Ok(ver)
+}
+
+pub fn binder_exit_thread(fd: BorrowedFd) -> Result<(), Errno> {
+    unsafe { ioctl::ioctl_binder_thread_exit(fd.as_raw_fd(), &mut 0) }?;
+    Ok(())
+}
+
+pub fn binder_set_max_threads(fd: BorrowedFd, mut count: u32) -> Result<(), Errno> {
+    unsafe { ioctl::ioctl_binder_set_max_threads(fd.as_raw_fd(), &mut count) }?;
+    Ok(())
 }
