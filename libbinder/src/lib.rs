@@ -13,7 +13,7 @@ use std::{
     thread::{self, JoinHandle, ThreadId},
 };
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, bail};
 use either::Either;
 use enumflags2::BitFlags;
 use libbinder_sys::{
