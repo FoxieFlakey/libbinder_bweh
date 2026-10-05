@@ -166,24 +166,24 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let mut reply_writer = crate::writer::Writer::new(target.get_runtime());
                     let mut msg_reader = crate::reader::Reader::new(message);
                     match code {
-                        #(#dispatchers),*
-                        #fallback
-                    }
-                })();
+                            #(#dispatchers),*
+                            #fallback
+                        }
+                    })();
 
-                if flags.contains(::libbinder::object::Flag::OneWay) {
-                    // Similar to Android's behaviour, don't send reply
-                    Ok(None)
-                } else {
-                    match reply {
-                        Ok(x) => Ok(Some((REPLY_SUCCESS, x))),
-                        Err(err) => {
-                            let mut writer = crate::writer::Writer::new(target.get_runtime());
-                            err.serialize(&mut writer).unwrap();
-                            Ok(Some((REPLY_FAILURE, writer.finish())))
+                    if flags.contains(::libbinder::object::Flag::OneWay) {
+                        // Similar to Android's behaviour, don't send reply
+                        Ok(None)
+                    } else {
+                        match reply {
+                            Ok(x) => Ok(Some((REPLY_SUCCESS, x))),
+                            Err(err) => {
+                                let mut writer = crate::writer::Writer::new(target.get_runtime());
+                                err.serialize(&mut writer).unwrap();
+                                Ok(Some((REPLY_FAILURE, writer.finish())))
+                            }
                         }
                     }
-                }
                 }
             }
         }
