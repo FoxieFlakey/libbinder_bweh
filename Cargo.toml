@@ -5,4 +5,4 @@ members = [
   "bytemuck-utils",
   "libbinder-test",
   "libbinder"
-, "extras/libbinder-basic"]
+, "extras/libbinder-basic", "extras/libbinder-basic-macros"]

@@ -1,6 +1,7 @@
 use std::{os::fd::BorrowedFd, sync::Arc};
 
 use libbinder::{
+    Runtime,
     object::{B, ObjectTrait},
     packet::Packet,
 };
@@ -8,6 +9,10 @@ use libbinder::{
 pub struct Writer(pub libbinder::packet::Writer);
 
 impl Writer {
+    pub fn new(runtime: Arc<Runtime>) -> Self {
+        Self(libbinder::packet::Writer::new(runtime))
+    }
+
     pub fn clear(&mut self) {
         self.0.clear();
     }

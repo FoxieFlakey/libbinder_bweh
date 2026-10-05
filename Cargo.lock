@@ -160,8 +160,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "enumflags2",
  "libbinder",
+ "libbinder-basic-macros",
  "thiserror",
+]
+
+[[package]]
+name = "libbinder-basic-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]

@@ -33,6 +33,10 @@ pub enum ReadError {
 }
 
 impl<'a> Reader<'a> {
+    pub fn new(packet: &'a libbinder::packet::Packet) -> Self {
+        Self(libbinder::packet::Reader::new(packet))
+    }
+
     pub fn read_bytes_raw(&mut self, buf: &mut [u8]) -> Result<(), LibBinderReadError> {
         self.0.read_bytes(buf)
     }
@@ -100,6 +104,14 @@ impl<'a> Reader<'a> {
             Err(bytemuck::PodCastError::OutputSliceWouldHaveSlop)
             | Err(bytemuck::PodCastError::SizeMismatch)
             | Err(bytemuck::PodCastError::AlignmentMismatch) => unreachable!(),
+        }
+    }
+
+    pub fn read_bool(&mut self) -> Result<bool, ReadError> {
+        if self.read_u8()? == 0 {
+            Ok(false)
+        } else {
+            Ok(true)
         }
     }
 
