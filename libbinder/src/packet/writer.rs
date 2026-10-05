@@ -67,6 +67,10 @@ impl Writer {
         &self.offsets
     }
 
+    pub fn get_current_offset(&self) -> usize {
+        self.data.len()
+    }
+
     pub fn clear(&mut self) {
         self.data.clear();
         self.offsets.clear();
@@ -99,9 +103,13 @@ impl Writer {
         self.data.extend_from_slice(bytes.as_ref());
     }
 
+    pub fn min_object_align() -> usize {
+        4
+    }
+
     pub fn write_fd(&mut self, fd: BorrowedFd<'_>) -> anyhow::Result<()> {
         assert!(
-            self.data.len().is_multiple_of(4),
+            self.data.len().is_multiple_of(Self::min_object_align()),
             "Binder objects must be at offset of multiple of four"
         );
         let offset = self.data.len();
@@ -126,7 +134,7 @@ impl Writer {
 
     pub fn write_buf<T: AsRef<[u8]> + 'static>(&mut self, bytes: T) {
         assert!(
-            self.data.len().is_multiple_of(4),
+            self.data.len().is_multiple_of(Self::min_object_align()),
             "Binder objects must be at offset of multiple of four"
         );
         let boxed;
@@ -164,7 +172,7 @@ impl Writer {
 
     pub fn write_reference(&mut self, reference: Arc<B<dyn ObjectTrait>>) {
         assert!(
-            self.data.len().is_multiple_of(4),
+            self.data.len().is_multiple_of(Self::min_object_align()),
             "Binder objects must be at offset of multiple of four"
         );
         let offset = self.data.len();

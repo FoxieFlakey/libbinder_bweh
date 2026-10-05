@@ -1,0 +1,14 @@
+[package]
+name = "libbinder-basic"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+bytemuck = { version = "1.25.2", optional = true }
+libbinder = { version = "0.1.0", path = "../../libbinder" }
+thiserror = "2.0.21"
+
+[features]
+default = ["bytemuck"]
+bytemuck = ["dep:bytemuck"]

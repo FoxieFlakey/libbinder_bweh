@@ -17,6 +17,7 @@ use thiserror::Error;
 
 use crate::{Runtime, packet::Packet, proxy::Proxy};
 
+#[derive(Clone)]
 pub struct Reader<'a> {
     runtime: &'a Arc<Runtime>,
     data: &'a [u8],
@@ -60,6 +61,10 @@ impl<'a> Reader<'a> {
             }
         }
         Ok(())
+    }
+
+    pub fn get_current_offset(&mut self) -> usize {
+        self.current_offset
     }
 
     pub fn skip_bytes(&mut self, count: usize) -> Result<(), Error> {

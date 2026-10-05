@@ -26,7 +26,7 @@ use libbinder_sys::{
     write_read::binder_read_write,
 };
 use nix::errno::Errno;
-pub use reader::Reader;
+pub use reader::{Error as ReadError, Reader};
 pub use writer::Writer;
 
 use crate::Runtime;

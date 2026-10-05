@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    error::Error,
     ffi::CString,
     io,
     ops::Deref,
@@ -89,7 +90,9 @@ pub enum TransactionError {
     #[error("Kernel cannot send this transaction")]
     KernelCantSend,
     #[error("Kernel has an error")]
-    KernelError(io::Error),
+    KernelError(#[source] io::Error),
+    #[error("Miscellanous error")]
+    Miscellanous(#[source] Box<dyn Error + Send + Sync>),
 }
 
 pub trait ObjectTrait: Sync + Send + Any + 'static {
