@@ -59,8 +59,8 @@ pub struct Runtime {
     manager: OnceLock<Arc<B<dyn ObjectTrait>>>,
     local_objects: Slab<Arc<B<dyn ObjectTrait>>>,
     identity_stack: ThreadLocal<RefCell<Vec<CallerIdentity>>>,
-    death_callbacks: Slab<Mutex<Option<Box<dyn FnOnce() + Send>>>>,
-    freeze_callbacks: Slab<Mutex<Option<Box<dyn FnOnce(bool) + Send>>>>,
+    death_callbacks: Slab<Mutex<Option<(Proxy, Box<dyn FnOnce() + Send>)>>>,
+    freeze_callbacks: Slab<Mutex<Option<(Proxy, Box<dyn FnOnce(bool) + Send>)>>>,
     _mmap: Mmap,
 }
 
@@ -398,7 +398,7 @@ impl Runtime {
                 .expect("get_remote returns local proxy when it must not");
             remote.extra_local_data = self
                 .death_callbacks
-                .insert(Mutex::new(Some(Box::new(callback))))
+                .insert(Mutex::new(Some((x.clone(), Box::new(callback)))))
                 .unwrap();
 
             let mut buf = Vec::new();
@@ -431,6 +431,7 @@ impl Runtime {
             .unwrap()
             .take()
             .unwrap()
+            .1
     }
 
     // NOTE: This is no-op on local object, so it returns None
@@ -448,7 +449,7 @@ impl Runtime {
                 .expect("get_remote returns local proxy when it must not");
             remote.extra_local_data = self
                 .freeze_callbacks
-                .insert(Mutex::new(Some(Box::new(callback))))
+                .insert(Mutex::new(Some((x.clone(), Box::new(callback)))))
                 .unwrap();
 
             let mut buf = Vec::new();
@@ -481,6 +482,7 @@ impl Runtime {
             .unwrap()
             .take()
             .unwrap()
+            .1
     }
 
     // handle transaction that comes
@@ -667,7 +669,8 @@ impl Runtime {
                         .get_mut()
                         .unwrap()
                         .take()
-                        .unwrap()();
+                        .unwrap()
+                        .1();
 
                     let mut buf = Vec::new();
                     buf.extend_from_slice(&Command::DeathNotificationDone.as_bytes());
@@ -685,7 +688,8 @@ impl Runtime {
                         .get_mut()
                         .unwrap()
                         .take()
-                        .unwrap()(is_now_frozen);
+                        .unwrap()
+                        .1(is_now_frozen);
 
                     let mut buf = Vec::new();
                     buf.extend_from_slice(&Command::FreezeNotificationDone.as_bytes());
