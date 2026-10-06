@@ -1,99 +1,40 @@
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
-use enumflags2::BitFlags;
 use libbinder::{
     Runtime,
-    object::{B, Flag, ObjectTrait, TransactionError},
-    packet::{self, Packet},
+    object::{B, ObjectTrait},
 };
 
 use crate::{
     implementation::object::ImplObject,
-    interface::{
-        REPLY_ERROR, REPLY_SUCCESS,
-        object::IObject,
-        service::{self, IService},
-    },
+    interface::{IObject, IService, iservice},
     once_event::OnceEvent,
 };
 
 pub struct ImplService {
-    derived: Weak<B<dyn IService>>,
     base: ImplObject,
-    shutdown_triggered: OnceEvent,
+    stop_triggered: OnceEvent,
 }
 
+iservice::decode_and_dispatch!(ImplService, base);
+
 impl ImplService {
-    pub fn new(runtime: Weak<Runtime>, derived: Weak<B<dyn IService>>) -> Self {
+    pub fn new(rt: Weak<Runtime>, this: Weak<B<dyn IService>>) -> Self {
         Self {
-            base: ImplObject::new(runtime.clone(), derived.clone() as Weak<B<dyn IObject>>),
-            derived,
-            shutdown_triggered: OnceEvent::new(),
+            base: ImplObject::new(rt, this),
+            stop_triggered: OnceEvent::new(),
         }
     }
 
     pub fn wait_shutdown(&self) {
-        self.shutdown_triggered.wait();
-    }
-}
-
-impl ObjectTrait for ImplService {
-    fn get_remote<'a>(&'a self) -> Option<&'a libbinder::proxy::Proxy> {
-        self.base.get_remote()
-    }
-
-    fn get_runtime(&self) -> Arc<Runtime> {
-        self.base.get_runtime()
-    }
-
-    fn on_transaction(
-        &self,
-        code: u32,
-        flags: BitFlags<Flag>,
-        message: &mut Packet,
-    ) -> Result<Option<(u32, Packet)>, TransactionError> {
-        let response = match code {
-            service::SAY_HELLO_CODE => self
-                .derived
-                .upgrade()
-                .unwrap()
-                .say_hello()
-                .map(|_| Some(packet::Writer::new(self.get_runtime()).finish())),
-            service::STOP_CODE => self
-                .derived
-                .upgrade()
-                .unwrap()
-                .stop()
-                .map(|_| Some(packet::Writer::new(self.get_runtime()).finish())),
-            _ => return self.base.on_transaction(code, flags, message),
-        };
-
-        match response {
-            Ok(Some(response)) => Ok(Some((REPLY_SUCCESS, response))),
-            Ok(None) => {
-                assert!(
-                    flags.contains(Flag::OneWay),
-                    "Expecting reply, but got none"
-                );
-                Ok(None)
-            }
-            Err(e) => {
-                if flags.contains(Flag::OneWay) {
-                    return Ok(None);
-                }
-
-                let mut writer = packet::Writer::new(self.get_runtime());
-                writer.write_bytes(format!("{e:#}"));
-                Ok(Some((REPLY_ERROR, writer.finish())))
-            }
-        }
+        self.stop_triggered.wait();
     }
 }
 
 impl IObject for ImplService {
     fn has_interface(&self, interface: &str) -> anyhow::Result<bool> {
         match interface {
-            service::ID => Ok(true),
+            iservice::ID => Ok(true),
             _ => self.base.has_interface(interface),
         }
     }
@@ -101,19 +42,17 @@ impl IObject for ImplService {
 
 impl IService for ImplService {
     fn stop(&self) -> anyhow::Result<()> {
-        println!(
-            "[Base service] Shutting down, triggered by {}",
-            self.get_runtime().get_caller_identity().sender_pid
-        );
-        self.shutdown_triggered.trigger();
+        let caller_pid = self.get_runtime().get_caller_identity().sender_pid;
+        let caller_uid = self.get_runtime().get_caller_identity().sender_euid;
+        println!("[Service] Stop trigged by {caller_pid} who is {caller_uid}");
+        self.stop_triggered.trigger();
         Ok(())
     }
 
     fn say_hello(&self) -> anyhow::Result<()> {
-        println!(
-            "[Base service] Hello!!!. Requested by {}",
-            self.get_runtime().get_caller_identity().sender_pid
-        );
+        let caller_pid = self.get_runtime().get_caller_identity().sender_pid;
+        let caller_uid = self.get_runtime().get_caller_identity().sender_euid;
+        println!("[Service] Say hello from {caller_pid} who is {caller_uid}");
         Ok(())
     }
 }

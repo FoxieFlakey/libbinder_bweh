@@ -1,32 +1,28 @@
 use std::sync::{Arc, Weak};
 
-use libbinder::{
-    ContextManagerInfo, Runtime,
-    object::{B, ObjectTrait},
-};
+use libbinder::{ContextManagerInfo, Runtime, object::B};
+
+use libbinder_basic::TryFromProxy;
 
 use crate::{
     implementation::calculator::ImplCalculator,
     interface::{
-        calculator::{self, ICalculator},
-        service_manager::IServiceManager,
+        CALCULATOR_SERVICE_ID, ICalculator, IServiceManager, iservicemanager::ProxyIServiceManager,
     },
-    proxy::service_manager::IServiceManagerProxy,
 };
 
 pub fn main() {
     let runtime = Runtime::new(
         "/dev/binder",
         ContextManagerInfo::Remote(Box::new(|proxy| {
-            IServiceManagerProxy::from_proxy(proxy)
-                .map(|x| Arc::new(B::new(x)) as Arc<B<dyn ObjectTrait>>)
+            Ok(<dyn IServiceManager>::try_from_proxy(proxy)?)
         })),
     )
     .unwrap();
 
     let manager = runtime
         .get_manager()
-        .downcast_ref::<IServiceManagerProxy>()
+        .downcast_ref::<ProxyIServiceManager>()
         .unwrap() as &dyn IServiceManager;
 
     let calculator = Arc::new_cyclic(|weak| {
@@ -37,8 +33,8 @@ pub fn main() {
     });
 
     manager
-        .register(calculator.clone(), calculator::SERVICE_ID)
+        .register(calculator.clone(), CALCULATOR_SERVICE_ID)
         .expect("Cannot register calculator");
 
-    calculator.base().wait_shutdown();
+    calculator.wait_shutdown();
 }

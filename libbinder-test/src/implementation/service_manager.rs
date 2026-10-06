@@ -4,26 +4,17 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
-use anyhow::{Context, anyhow, bail};
-use enumflags2::BitFlags;
+use anyhow::{Context, bail};
 use libbinder::{
     DeathNotificationToken, Runtime,
-    object::{B, Flag, ObjectTrait, TransactionError},
-    packet::{self, Packet},
-    proxy::Proxy,
+    object::{B, ObjectTrait},
 };
 use nix::unistd::Pid;
 
 use crate::{
     implementation::object::ImplObject,
-    interface::{
-        REPLY_ERROR, REPLY_SUCCESS,
-        object::IObject,
-        service::IService,
-        service_manager::{self, IServiceManager},
-    },
+    interface::{IObject, IService, IServiceManager, iservicemanager},
     once_event::OnceEvent,
-    proxy::service::IServiceProxy,
 };
 
 struct ServiceInfo {
@@ -39,7 +30,6 @@ struct State {
 
 pub struct ImplManager {
     base: ImplObject,
-    derived: Weak<B<dyn IServiceManager>>,
     shutdown_event: OnceEvent,
     state: RwLock<State>,
 }
@@ -53,7 +43,6 @@ impl ImplManager {
                 is_shutting_down: false,
                 services: HashMap::new(),
             }),
-            derived,
         }
     }
 
@@ -62,117 +51,12 @@ impl ImplManager {
     }
 }
 
-impl ObjectTrait for ImplManager {
-    fn get_remote<'a>(&'a self) -> Option<&'a Proxy> {
-        self.base.get_remote()
-    }
-
-    fn get_runtime(&self) -> Arc<Runtime> {
-        self.base.get_runtime()
-    }
-
-    fn on_transaction(
-        &self,
-        code: u32,
-        flags: BitFlags<Flag>,
-        message: &mut Packet,
-    ) -> Result<Option<(u32, Packet)>, TransactionError> {
-        let mut reader = message.reader();
-        let response = match code {
-            service_manager::REGISTER_CODE => match reader.read_reference() {
-                Ok(proxy) => match IServiceProxy::from_proxy(proxy) {
-                    Ok(service) => match str::from_utf8(reader.get_rest_of_data()) {
-                        Ok(name) => {
-                            let ret = self
-                                .derived
-                                .upgrade()
-                                .unwrap()
-                                .register(Arc::new(B::new(service)), name);
-
-                            ret.map(|_| Some(packet::Writer::new(self.get_runtime()).finish()))
-                        }
-                        Err(e) => Err(anyhow!("Malform service name: {e}")),
-                    },
-                    Err(e) => Err(anyhow!(
-                        "Cannot check if service supports IService interface: {e}"
-                    )),
-                },
-                Err(e) => Err(anyhow!("Cannot read service reference: {e}")),
-            },
-            service_manager::UNREGISTER_CODE => match str::from_utf8(reader.get_rest_of_data()) {
-                Ok(name) => {
-                    let ret = self.derived.upgrade().unwrap().unregister(name);
-
-                    ret.map(|_| Some(packet::Writer::new(self.get_runtime()).finish()))
-                }
-                Err(x) => Err(anyhow!("Malformed interface name: {x}")),
-            },
-            service_manager::SHUTDOWN_CODE => self
-                .derived
-                .upgrade()
-                .unwrap()
-                .shutdown()
-                .map(|_| Some(packet::Writer::new(self.get_runtime()).finish())),
-            service_manager::GET_SERVICE_CODE => match str::from_utf8(reader.get_rest_of_data()) {
-                Ok(name) => {
-                    let ret = self.derived.upgrade().unwrap().get_service(name);
-
-                    ret.map(|x| {
-                        let mut writer = packet::Writer::new(self.get_runtime());
-                        writer.write_reference(x);
-                        Some(writer.finish())
-                    })
-                }
-                Err(x) => Err(anyhow!("Malformed interface name: {x}")),
-            },
-            service_manager::HEALTH_CHECK_CODE => {
-                let ret = self.derived.upgrade().unwrap().health_check();
-
-                ret.map(|_| Some(packet::Writer::new(self.get_runtime()).finish()))
-            }
-            service_manager::GET_REF_COUNT_CODE => match reader.read_reference() {
-                Ok(proxy) => self
-                    .derived
-                    .upgrade()
-                    .unwrap()
-                    .get_refcount(Arc::new(B::new(proxy)))
-                    .map(|(strong, weak)| {
-                        let mut writer = packet::Writer::new(self.get_runtime());
-                        writer.write_bytes(&strong.to_ne_bytes());
-                        writer.write_bytes(&weak.to_ne_bytes());
-                        Some(writer.finish())
-                    }),
-                Err(e) => Err(anyhow!("Cannot read service reference: {e}")),
-            },
-            _ => return self.base.on_transaction(code, flags, message),
-        };
-
-        match response {
-            Ok(Some(response)) => Ok(Some((REPLY_SUCCESS, response))),
-            Ok(None) => {
-                assert!(
-                    flags.contains(Flag::OneWay),
-                    "Expecting reply, but got none"
-                );
-                Ok(None)
-            }
-            Err(e) => {
-                if flags.contains(Flag::OneWay) {
-                    return Ok(None);
-                }
-
-                let mut writer = packet::Writer::new(self.get_runtime());
-                writer.write_bytes(format!("{e:#}"));
-                Ok(Some((REPLY_ERROR, writer.finish())))
-            }
-        }
-    }
-}
+iservicemanager::decode_and_dispatch!(ImplManager, base);
 
 impl IObject for ImplManager {
     fn has_interface(&self, interface: &str) -> anyhow::Result<bool> {
         match interface {
-            service_manager::ID => Ok(true),
+            iservicemanager::ID => Ok(true),
             _ => self.base.has_interface(interface),
         }
     }
@@ -247,7 +131,7 @@ impl IServiceManager for ImplManager {
         }
 
         let rt = self.get_runtime();
-        let this = self.base.get_derived().clone();
+        let this = Arc::downgrade(&self.base.get_this().clone());
         let name_cloned = name.to_string();
         let at_registration_proxy = service
             .get_remote()

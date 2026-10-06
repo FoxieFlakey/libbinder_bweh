@@ -1,8 +1,13 @@
-use std::os::fd::{AsFd, OwnedFd};
+use std::{
+    os::fd::{AsFd, OwnedFd},
+    sync::Arc,
+};
 
 use anyhow::{Context, anyhow};
+use bytemuck::Pod;
+use libbinder::object::B;
 
-use crate::{reader::Reader, writer::Writer};
+use crate::{TryFromProxy, reader::Reader, writer::Writer};
 
 pub trait Packetable {
     type Deserialized<'a>;
@@ -140,6 +145,118 @@ impl Packetable for String {
 
     fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
         Ok(reader.read_str()?.to_string())
+    }
+}
+
+impl<A0: Packetable, A1: Packetable> Packetable for (A0, A1) {
+    type Deserialized<'a> = (A0::Deserialized<'a>, A1::Deserialized<'a>);
+
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        self.0.serialize(writer)?;
+        self.1.serialize(writer)?;
+        Ok(())
+    }
+
+    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+        Ok((A0::deserialize(reader)?, A1::deserialize(reader)?))
+    }
+}
+
+impl<A0: Packetable, A1: Packetable, A2: Packetable> Packetable for (A0, A1, A2) {
+    type Deserialized<'a> = (
+        A0::Deserialized<'a>,
+        A1::Deserialized<'a>,
+        A2::Deserialized<'a>,
+    );
+
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        self.0.serialize(writer)?;
+        self.1.serialize(writer)?;
+        self.2.serialize(writer)?;
+        Ok(())
+    }
+
+    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+        Ok((
+            A0::deserialize(reader)?,
+            A1::deserialize(reader)?,
+            A2::deserialize(reader)?,
+        ))
+    }
+}
+
+impl<A0: Packetable, A1: Packetable, A2: Packetable, A3: Packetable> Packetable
+    for (A0, A1, A2, A3)
+{
+    type Deserialized<'a> = (
+        A0::Deserialized<'a>,
+        A1::Deserialized<'a>,
+        A2::Deserialized<'a>,
+        A3::Deserialized<'a>,
+    );
+
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        self.0.serialize(writer)?;
+        self.1.serialize(writer)?;
+        self.2.serialize(writer)?;
+        Ok(())
+    }
+
+    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+        Ok((
+            A0::deserialize(reader)?,
+            A1::deserialize(reader)?,
+            A2::deserialize(reader)?,
+            A3::deserialize(reader)?,
+        ))
+    }
+}
+
+impl<T: Pod> Packetable for Vec<T> {
+    type Deserialized<'a> = Vec<T>;
+
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        writer.write_usize(self.len());
+        writer.write_buf_slice_pod_without_len(self);
+        Ok(())
+    }
+
+    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+        let len = reader.read_usize()?;
+        let buf = reader.read_buf()?;
+        let mut vec = Vec::new();
+        vec.extend_from_slice(bytemuck::cast_slice(&buf[..len * size_of::<T>()]));
+        Ok(vec)
+    }
+}
+
+impl<T: Pod> Packetable for &[T] {
+    type Deserialized<'a> = &'a [T];
+
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        writer.write_usize(self.len());
+        writer.write_buf_slice_pod_without_len(self);
+        Ok(())
+    }
+
+    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+        let len = reader.read_usize()?;
+        let buf = reader.read_buf()?;
+
+        Ok(bytemuck::cast_slice(&buf[..len * size_of::<T>()]))
+    }
+}
+
+impl<T: TryFromProxy + ?Sized> Packetable for Arc<B<T>> {
+    type Deserialized<'a> = Arc<B<T>>;
+
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        writer.write_ref(&TryFromProxy::into_base(self.clone()));
+        Ok(())
+    }
+
+    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+        Ok(T::try_from_proxy(reader.read_reference()?)?)
     }
 }
 

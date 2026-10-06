@@ -46,13 +46,9 @@ impl Writer {
         self.0.write_buf(bytes);
     }
 
-    pub fn write_ref<T>(&mut self, reference: &Arc<B<T>>)
-    where
-        T: ObjectTrait,
-    {
+    pub fn write_ref(&mut self, reference: &Arc<B<dyn ObjectTrait>>) {
         self.align_object();
-        let reference = reference.clone() as Arc<B<dyn ObjectTrait>>;
-        self.0.write_reference(reference);
+        self.0.write_reference(reference.clone());
     }
 
     pub fn write_bytes_raw<T>(&mut self, bytes: T)
@@ -81,6 +77,22 @@ impl Writer {
         T: bytemuck::Pod,
     {
         self.write_bytes_raw(bytemuck::bytes_of(data));
+    }
+
+    #[cfg(feature = "bytemuck")]
+    pub fn write_buf_slice_pod_without_len<T>(&mut self, data: &[T])
+    where
+        T: bytemuck::Pod,
+    {
+        struct AsBytes<T: bytemuck::Pod>(Box<[T]>);
+
+        impl<T: bytemuck::Pod> AsRef<[u8]> for AsBytes<T> {
+            fn as_ref(&self) -> &[u8] {
+                bytemuck::cast_slice(&self.0)
+            }
+        }
+
+        self.write_bytes_raw(AsBytes(data.into()));
     }
 
     #[cfg(feature = "bytemuck")]

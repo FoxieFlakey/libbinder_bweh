@@ -4,7 +4,7 @@ use libbinder::{ContextManagerInfo, Runtime, object::B};
 
 use crate::{
     implementation::{self, service_manager::ImplManager},
-    interface::service_manager::IServiceManager,
+    interface::IServiceManager,
 };
 
 pub fn main() {

@@ -1,32 +1,27 @@
 use std::sync::{Arc, Weak};
 
-use libbinder::{
-    ContextManagerInfo, Runtime,
-    object::{B, ObjectTrait},
-};
+use libbinder::{ContextManagerInfo, Runtime, object::B};
+use libbinder_basic::TryFromProxy;
 
 use crate::{
     implementation::file_server::ImplFileServer,
     interface::{
-        file_server::{self, IFileServer},
-        service_manager::IServiceManager,
+        FILE_SERVER_SERVICE_ID, IFileServer, IServiceManager, iservicemanager::ProxyIServiceManager,
     },
-    proxy::service_manager::IServiceManagerProxy,
 };
 
 pub fn main() {
     let runtime = Runtime::new(
         "/dev/binder",
         ContextManagerInfo::Remote(Box::new(|proxy| {
-            IServiceManagerProxy::from_proxy(proxy)
-                .map(|x| Arc::new(B::new(x)) as Arc<B<dyn ObjectTrait>>)
+            Ok(<dyn IServiceManager>::try_from_proxy(proxy)?)
         })),
     )
     .unwrap();
 
     let manager = runtime
         .get_manager()
-        .downcast_ref::<IServiceManagerProxy>()
+        .downcast_ref::<ProxyIServiceManager>()
         .unwrap() as &dyn IServiceManager;
 
     let file_server = Arc::new_cyclic(|weak| {
@@ -37,8 +32,8 @@ pub fn main() {
     });
 
     manager
-        .register(file_server.clone(), file_server::SERVICE_ID)
+        .register(file_server.clone(), FILE_SERVER_SERVICE_ID)
         .expect("Cannot register file server");
 
-    file_server.base().wait_shutdown();
+    file_server.wait_shutdown();
 }

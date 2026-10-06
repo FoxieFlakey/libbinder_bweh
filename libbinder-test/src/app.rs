@@ -10,31 +10,25 @@ use libbinder::{
     proxy::Proxy,
 };
 
-use crate::{
-    interface::{
-        calculator::{self, ICalculator},
-        file_server::{self, IFileServer},
-        service_manager::IServiceManager,
-    },
-    proxy::{
-        calculator::ICalculatorProxy, file_server::IFileServerProxy,
-        service_manager::IServiceManagerProxy,
-    },
+use libbinder_basic::TryFromProxy;
+
+use crate::interface::{
+    CALCULATOR_SERVICE_ID, FILE_SERVER_SERVICE_ID, ICalculator, IFileServer, IServiceManager,
+    iservicemanager::ProxyIServiceManager,
 };
 
 pub fn main() {
     let runtime = Runtime::new(
         "/dev/binder",
         ContextManagerInfo::Remote(Box::new(|proxy| {
-            IServiceManagerProxy::from_proxy(proxy)
-                .map(|x| Arc::new(B::new(x)) as Arc<B<dyn ObjectTrait>>)
+            Ok(<dyn IServiceManager>::try_from_proxy(proxy)? as Arc<B<dyn ObjectTrait>>)
         })),
     )
     .unwrap();
 
     let manager = runtime
         .get_manager()
-        .downcast_ref::<IServiceManagerProxy>()
+        .downcast_ref::<ProxyIServiceManager>()
         .unwrap() as &dyn IServiceManager;
 
     // service manager cannot fetch reference count for its own local object
@@ -54,7 +48,7 @@ pub fn main() {
     // );
 
     let calculator_service = manager
-        .get_service(calculator::SERVICE_ID)
+        .get_service(CALCULATOR_SERVICE_ID)
         .expect("Getting calculator service");
     println!(
         "Calculator service got {} strong refs",
@@ -65,10 +59,10 @@ pub fn main() {
         manager.get_refcount(calculator_service.clone()).unwrap().1
     );
 
-    let calculator = &ICalculatorProxy::from_proxy(Proxy::from_object(calculator_service)).unwrap()
-        as &dyn ICalculator;
+    let calculator = &**<dyn ICalculator>::try_from_proxy(Proxy::from_object(calculator_service))
+        .unwrap() as &dyn ICalculator;
     let file_server_service = manager
-        .get_service(file_server::SERVICE_ID)
+        .get_service(FILE_SERVER_SERVICE_ID)
         .expect("Getting file server service");
     println!(
         "File server service got {} strong refs",
@@ -79,7 +73,7 @@ pub fn main() {
         manager.get_refcount(file_server_service.clone()).unwrap().1
     );
 
-    let file_server = &IFileServerProxy::from_proxy(Proxy::from_object(file_server_service))
+    let file_server = &**<dyn IFileServer>::try_from_proxy(Proxy::from_object(file_server_service))
         .unwrap() as &dyn IFileServer;
 
     println!("Interacting mode :3");

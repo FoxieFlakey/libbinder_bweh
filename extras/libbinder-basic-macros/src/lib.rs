@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    FnArg, ItemTrait, LitBool, PatType, Path, PathSegment, ReturnType, TraitItem, TypeParamBound,
-    parse_macro_input, parse_quote, spanned::Spanned,
+    FnArg, ItemTrait, LitBool, LitStr, PatType, Path, PathSegment, ReturnType, TraitItem,
+    TypeParamBound, parse_macro_input, parse_quote, spanned::Spanned,
 };
 
 // half AI generated, with small edits i made
@@ -12,14 +12,29 @@ use syn::{
 pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
     // 1. Initialize a flag to hold our configuration state
     let mut is_root = false;
+    let mut is_root_found = false;
+    let mut interface_id = None;
     let mut parent_trait = None;
 
     // 2. Parse the attribute helper arguments
     let attr_parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("root") {
+            if is_root_found {
+                return Err(meta.error("double 'root' attribute!"));
+            }
+
             // Match the `=` sign and parse the boolean literal (true/false)
             let value: LitBool = meta.value()?.parse()?;
             is_root = value.value();
+            is_root_found = true;
+            Ok(())
+        } else if meta.path.is_ident("interface_id") {
+            if interface_id.is_some() {
+                return Err(meta.error("double 'interface_id' attribute!"));
+            }
+
+            let value: LitStr = meta.value()?.parse()?;
+            interface_id = Some(value.value());
             Ok(())
         } else {
             // Return an error if an unknown parameter is passed
@@ -33,6 +48,12 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
     // 3. Parse the target trait item
     let input_trait = parse_macro_input!(item as ItemTrait);
     let trait_name = &input_trait.ident;
+
+    let Some(interface_id) = interface_id else {
+        return syn::Error::new(input_trait.span(), "interface_id is required")
+            .to_compile_error()
+            .into();
+    };
 
     for bound in &input_trait.supertraits {
         if let TypeParamBound::Trait(trait_bound) = bound {
@@ -221,7 +242,7 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #(#arg_encoder);*
                     let mut packet = _ec27c490_2b98_48ab_a72e_ce7e50ff669e_writer.finish();
                     let (code, reply) = self
-                        .on_transaction(#code_name, ::enumflags2::BitFlags::default(), &mut packet)
+                        .on_transaction(#code_name, ::libbinder::object::Flag::AcceptFd.into(), &mut packet)
                         .context("Cannot perform transaction")?
                         .context("Expecting reply, but got none")?;
 
@@ -243,34 +264,54 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
             current_transact_id += 1;
         }
     }
-    codes.push(quote! {
-        pub const NEXT_TRANSACTION_CODE: u32 = #current_transact_id;
-    });
+    if is_root {
+        codes.push(quote! {
+            pub const NEXT_TRANSACTION_CODE: u32 = #current_transact_id;
+        });
+    } else {
+        codes.push(quote! {
+            pub const NEXT_TRANSACTION_CODE: u32 = #parent_trait_next_transact + #current_transact_id;
+        });
+    }
 
     let proxy_name = format_ident!("Proxy{}", trait_name);
     let fallback;
     let proxy_forwarder;
     let base_proxy;
+    let proxy_maker;
+    let parent_forwarder;
 
     if is_root {
         fallback = quote! { x => Err(anyhow!("unrecognized transaction code {x}")), };
         proxy_forwarder = quote! {};
+        parent_forwarder = quote! {};
         base_proxy = quote! { ::libbinder::proxy::Proxy };
+        proxy_maker = quote! { Self { base } };
     } else {
         fallback = quote! { _ => return <dyn #parent_trait>::decode_and_dispatch(target as &dyn #parent_trait, code, flags, message), };
         let forwarder_macro = append_segment(&parent_module, parse_quote!(forwarder));
         proxy_forwarder = quote! {
             #forwarder_macro!(#proxy_name, base);
         };
+        parent_forwarder = quote! {
+            #forwarder_macro!($impl_name, $($target_field)*);
+        };
 
         let base_proxy_name = format_ident!("Proxy{}", parent_trait.segments.last().unwrap().ident);
         let base_proxy_path = append_segment(&parent_module, parse_quote!(#base_proxy_name));
         base_proxy = quote! { #base_proxy_path };
+        proxy_maker = quote! { Self { base: #base_proxy_path::new(base) } };
     }
 
     let proxy = quote! {
         pub struct #proxy_name {
             base: #base_proxy,
+        }
+
+        impl #proxy_name {
+            pub fn new(base: ::libbinder::proxy::Proxy) -> Self {
+                #proxy_maker
+            }
         }
 
         impl ::libbinder::object::ObjectTrait for #proxy_name {
@@ -309,6 +350,8 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
             use super::*;
             #(#codes)*
 
+            pub const ID: &str = #interface_id;
+
             impl dyn #trait_name {
                 pub fn decode_and_dispatch(
                     target: &dyn #trait_name,
@@ -342,15 +385,57 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
             #proxy
             #proxy_forwarder
 
+            impl ::libbinder_basic::TryFromProxy for dyn #trait_name {
+                type ProxyType = #proxy_name;
+
+                fn try_from_proxy(proxy: ::libbinder::proxy::Proxy) -> ::std::result::Result<::std::sync::Arc<::libbinder::object::B<Self>>, ::libbinder::object::TransactionError> {
+                    let temp = #proxy_name::new(proxy);
+                    if !temp.has_interface(ID).map_err(|x| ::libbinder::object::TransactionError::Miscellanous(x.into()))? {
+                        return Err(::libbinder::object::TransactionError::Miscellanous(anyhow!("Remote does not support '{}' interface", ID).into()));
+                    }
+                    Ok(::std::sync::Arc::new(::libbinder::object::B::new(temp)))
+                }
+
+                fn into_base(reference: ::std::sync::Arc<B<Self>>) -> ::std::sync::Arc<::libbinder::object::B<dyn ::libbinder::object::ObjectTrait>> {
+                    reference
+                }
+            }
+
             macro_rules! forwarder {
                 ($impl_name:ident, $($target_field:tt)*) => {
                     impl #trait_name for $impl_name {
                         #(#forwarders)*
                     }
+
+                    #parent_forwarder
+                };
+            }
+
+            macro_rules! decode_and_dispatch {
+                ($impl_name:ident, $($target_field:tt)*) => {
+                    impl ::libbinder::object::ObjectTrait for $impl_name {
+                        fn get_remote<'a>(&'a self) -> std::option::Option<&'a ::libbinder::proxy::Proxy> {
+                            self.base.get_remote()
+                        }
+
+                        fn get_runtime(&self) -> std::sync::Arc<::libbinder::Runtime> {
+                            self.base.get_runtime()
+                        }
+
+                        fn on_transaction(
+                            &self,
+                            code: u32,
+                            flags: ::enumflags2::BitFlags<::libbinder::object::Flag>,
+                            message: &mut ::libbinder::packet::Packet,
+                        ) -> ::std::result::Result<::std::option::Option<(u32, ::libbinder::packet::Packet)>, libbinder::object::TransactionError> {
+                            <dyn #trait_name>::decode_and_dispatch(self, code, flags, message)
+                        }
+                    }
                 };
             }
 
             pub(crate) use forwarder;
+            pub(crate) use decode_and_dispatch;
         }
     })
 }

@@ -4,7 +4,6 @@ mod file_server;
 mod implementation;
 mod interface;
 mod once_event;
-mod proxy;
 mod service_manager;
 
 pub fn main() {

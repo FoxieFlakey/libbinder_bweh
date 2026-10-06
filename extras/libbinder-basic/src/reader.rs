@@ -62,15 +62,11 @@ impl<'a> Reader<'a> {
         self.0.skip_bytes(padding)
     }
 
-    pub fn read_reference<T>(&mut self) -> Result<T, ReadError>
-    where
-        T: TryFrom<Proxy, Error = TransactionError>,
-    {
+    pub fn read_reference(&mut self) -> Result<Proxy, ReadError> {
         self.align_object()?;
 
         // Rewind reader if failed
-        let reference = self.0.read_reference()?;
-        Ok(T::try_from(reference)?)
+        Ok(self.0.read_reference()?)
     }
 
     pub fn read_fd(&mut self) -> Result<OwnedFd, ReadError> {
