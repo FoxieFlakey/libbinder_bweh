@@ -130,6 +130,19 @@ impl Packetable for str {
     }
 }
 
+impl Packetable for String {
+    type Deserialized<'a> = String;
+
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        writer.write_str(self);
+        Ok(())
+    }
+
+    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+        Ok(reader.read_str()?.to_string())
+    }
+}
+
 macro_rules! impl_write_primitives {
     ($($t:ty, $method:ident, $method_read:ident);* $(;)?) => {
         $(

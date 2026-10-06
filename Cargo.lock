@@ -196,6 +196,8 @@ dependencies = [
  "either",
  "enumflags2",
  "libbinder",
+ "libbinder-basic",
+ "libbinder-basic-macros",
  "nix",
 ]
 

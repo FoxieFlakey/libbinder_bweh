@@ -155,6 +155,25 @@ impl B<dyn ObjectTrait> {
     }
 }
 
+impl<T: ObjectTrait + ?Sized> ObjectTrait for B<T> {
+    fn get_remote<'a>(&'a self) -> Option<&'a Proxy> {
+        self.inner.get_remote()
+    }
+
+    fn get_runtime(&self) -> Arc<Runtime> {
+        self.inner.get_runtime()
+    }
+
+    fn on_transaction(
+        &self,
+        code: u32,
+        flags: enumflags2::BitFlags<Flag>,
+        message: &mut Packet,
+    ) -> Result<Option<(u32, Packet)>, TransactionError> {
+        self.inner.on_transaction(code, flags, message)
+    }
+}
+
 impl<T: ObjectTrait + ?Sized> Deref for B<T> {
     type Target = T;
 
