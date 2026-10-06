@@ -326,7 +326,7 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
             fn on_transaction(
                 &self,
                 code: u32,
-                flags: ::enumflags2::BitFlags<libbinder::object::Flag>,
+                flags: ::libbinder_basic::enumflags2::BitFlags<libbinder::object::Flag>,
                 message: &mut ::libbinder::packet::Packet,
             ) -> Result<Option<(u32, ::libbinder::packet::Packet)>, ::libbinder::object::TransactionError> {
                 self.base.on_transaction(code, flags, message)
@@ -356,7 +356,7 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
                 pub fn decode_and_dispatch(
                     target: &dyn #trait_name,
                     code: ::std::primitive::u32,
-                    flags: ::enumflags2::BitFlags<::libbinder::object::Flag>,
+                    flags: ::libbinder_basic::enumflags2::BitFlags<::libbinder::object::Flag>,
                     message: &mut ::libbinder::packet::Packet,
                 ) -> ::std::result::Result<::std::option::Option<(::std::primitive::u32, ::libbinder::packet::Packet)>, ::libbinder::object::TransactionError> {
                     let mut reply_writer = libbinder_basic::writer::Writer::new(target.get_runtime());
@@ -425,7 +425,7 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
                         fn on_transaction(
                             &self,
                             code: u32,
-                            flags: ::enumflags2::BitFlags<::libbinder::object::Flag>,
+                            flags: ::libbinder_basic::enumflags2::BitFlags<::libbinder::object::Flag>,
                             message: &mut ::libbinder::packet::Packet,
                         ) -> ::std::result::Result<::std::option::Option<(u32, ::libbinder::packet::Packet)>, libbinder::object::TransactionError> {
                             <dyn #trait_name>::decode_and_dispatch(self, code, flags, message)

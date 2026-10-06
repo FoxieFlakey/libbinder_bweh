@@ -1,7 +1,7 @@
 use std::{os::fd::OwnedFd, sync::Arc};
 
 use libbinder::object::{B, ObjectTrait};
-use libbinder_basic_macros::binder_ipc_object;
+use libbinder_basic::binder_ipc_object;
 
 #[binder_ipc_object(root = true, interface_id = "foxie.IObject")]
 pub trait IObject: ObjectTrait {

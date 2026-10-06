@@ -34,7 +34,7 @@ impl ObjectTrait for ImplObject {
     fn on_transaction(
         &self,
         code: u32,
-        flags: enumflags2::BitFlags<libbinder::object::Flag>,
+        flags: libbinder_basic::enumflags2::BitFlags<libbinder::object::Flag>,
         message: &mut libbinder::packet::Packet,
     ) -> Result<Option<(u32, libbinder::packet::Packet)>, libbinder::object::TransactionError> {
         <dyn IObject>::decode_and_dispatch(self, code, flags, message)

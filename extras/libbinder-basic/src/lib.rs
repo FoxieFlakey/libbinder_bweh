@@ -5,6 +5,11 @@ use libbinder::{
     proxy::Proxy,
 };
 
+#[cfg(feature = "macros")]
+pub use libbinder_basic_macros::binder_ipc_object;
+
+pub use enumflags2;
+
 // This library exposes useful types and helpers for using libbinder
 pub mod packetable;
 pub mod reader;
