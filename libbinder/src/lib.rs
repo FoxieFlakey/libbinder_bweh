@@ -623,8 +623,9 @@ impl Runtime {
                         self.local_objects
                             .take(data)
                             .expect("Cannot remove local object");
-                        println!("Release strong for {data}");
+                        println!("Dealloc for {data}");
                     }
+                    println!("Release strong for {data}");
                 }
                 return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
                     let meta = self
@@ -657,8 +658,9 @@ impl Runtime {
                         self.local_objects
                             .take(data)
                             .expect("Cannot remove local object");
-                        println!("Release weak for {data}");
+                        println!("Dealloc for {data}");
                     }
+                    println!("Release weak for {data}");
                 }
                 return_parser::RetVal::ClearDeathNotificationDone(cookie) => {
                     let _ = self
