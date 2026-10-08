@@ -188,7 +188,6 @@ impl Runtime {
             entry.insert(object);
         }
 
-        println!("Adding object: {id}");
         id
     }
 
@@ -504,10 +503,7 @@ impl Runtime {
         let code = transaction.get_data().code;
         let flags = object::Flag::from_raw(transaction.get_data().flags);
         let mut packet = Packet::from_kernel(self.clone(), transaction);
-        let Some(meta) = self.local_objects.get(target) else {
-            println!("Locating {target}");
-            panic!()
-        };
+        let meta = self.local_objects.get(target).unwrap();
         let control = meta.control.read().unwrap();
         if !control.has_strong && !control.has_weak {
             panic!("Attempting to handle transaction on object that was already removed")
@@ -619,7 +615,6 @@ impl Runtime {
                         self.local_objects
                             .take(data)
                             .expect("Cannot remove local object");
-                        println!("Release strong for {data}");
                     }
                 }
                 return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
@@ -653,7 +648,6 @@ impl Runtime {
                         self.local_objects
                             .take(data)
                             .expect("Cannot remove local object");
-                        println!("Release weak for {data}");
                     }
                 }
                 return_parser::RetVal::ClearDeathNotificationDone(cookie) => {
