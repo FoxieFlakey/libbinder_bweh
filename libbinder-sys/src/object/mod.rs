@@ -82,7 +82,7 @@ impl Type {
             FD => Ok(Type::FileDescriptor),
             FDA => Ok(Type::FileDescriptorArray),
             PTR => Ok(Type::ByteBuffer),
-            _ => Err(anyhow!("Unknown object type")),
+            x => Err(anyhow!("Unknown object type: {x}")),
         }
     }
 }
