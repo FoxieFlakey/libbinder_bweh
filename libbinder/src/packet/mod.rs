@@ -150,6 +150,8 @@ impl Packet {
                 self.runtime
                     .local_objects
                     .get(data)
+                    .ok_or(())
+                    .inspect_err(|()| println!("gah: {data}"))
                     .expect("Cannot find object")
                     .control
                     .write()
