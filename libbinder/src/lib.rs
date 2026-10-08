@@ -180,15 +180,16 @@ impl Runtime {
             }
             id = *idx;
             drop(control);
+            println!("Adding object: {id} exists");
         } else {
             let entry = self.local_objects.vacant_entry().unwrap();
             id = entry.key();
             control.live_slot = Some((id, Arc::downgrade(self)));
             drop(control);
             entry.insert(object);
+            println!("Adding object: {id} dont exists");
         }
 
-        println!("Adding object: {id}");
         id
     }
 
