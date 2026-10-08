@@ -39,6 +39,8 @@ pub enum Error {
 
 impl<'a> Reader<'a> {
     pub fn new(packet: &'a Packet) -> Self {
+        println!("Offsets: {:#?}", packet.get_offsets());
+        println!("Data: {:#?}", packet.get_data());
         Self {
             runtime: &packet.runtime,
             current_offset: 0,
@@ -169,11 +171,6 @@ impl<'a> Reader<'a> {
         // controlled to be only contain valid object with valid
         // pointers
         let ret = match unsafe { ObjectParsed::try_from_bytes(&self.data) }
-            .inspect_err(|_| {
-                println!("Offsets: {:#?}", self.offsets);
-                println!("Data: {:#?}", self.data);
-                println!("Current offset: {}", self.current_offset);
-            })
             .expect("expecting data is valid")
         {
             ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => Ok(Proxy::from_object(
