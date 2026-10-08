@@ -521,7 +521,7 @@ impl Runtime {
             return;
         }
 
-        let Some((reply_code, reply)) = ret else {
+        let Some((reply_code, mut reply)) = ret else {
             panic!("This is non oneway transaction but reply is not provided");
         };
 
@@ -548,6 +548,7 @@ impl Runtime {
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
         self.do_read_write(&write_buf, &mut [])
             .expect("Cannot send reply");
+        unsafe { reply.objects_sent() };
     }
 
     fn inc_remote_ref(&self, remote: &ObjectRefRemote) {
