@@ -180,14 +180,12 @@ impl Runtime {
             }
             id = *idx;
             drop(control);
-            println!("Adding object: {id} exists");
         } else {
             let entry = self.local_objects.vacant_entry().unwrap();
             id = entry.key();
             control.live_slot = Some((id, Arc::downgrade(self)));
             drop(control);
             entry.insert(object);
-            println!("Adding object: {id} dont exists");
         }
 
         id
@@ -506,10 +504,7 @@ impl Runtime {
         let code = transaction.get_data().code;
         let flags = object::Flag::from_raw(transaction.get_data().flags);
         let mut packet = Packet::from_kernel(self.clone(), transaction);
-        let Some(meta) = self.local_objects.get(target) else {
-            println!("Locating {target}");
-            panic!()
-        };
+        let meta = self.local_objects.get(target).unwrap();
         let control = meta.control.read().unwrap();
         if !control.has_strong && !control.has_weak {
             panic!("Attempting to handle transaction on object that was already removed")
@@ -552,9 +547,9 @@ impl Runtime {
             buffers_size: reply.get_buffers_size(),
         });
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
-        unsafe { reply.objects_sent() };
 
         // NOTE: on reply error. memory would leak. but this should be rare
+        unsafe { reply.objects_sent() };
         self.do_read_write(&write_buf, &mut [])
             .expect("Cannot send reply");
     }
@@ -619,14 +614,13 @@ impl Runtime {
                     control.has_strong = false;
 
                     if !control.has_weak {
+                        control.live_slot.take();
                         drop(control);
                         drop(meta);
                         self.local_objects
                             .take(data)
                             .expect("Cannot remove local object");
-                        println!("Dealloc for {data}");
                     }
-                    println!("Release strong for {data}");
                 }
                 return_parser::RetVal::AcquireWeak(ObjectRefLocal { data, .. }) => {
                     let meta = self
@@ -654,14 +648,13 @@ impl Runtime {
                     control.has_weak = false;
 
                     if !control.has_strong {
+                        control.live_slot.take();
                         drop(control);
                         drop(meta);
                         self.local_objects
                             .take(data)
                             .expect("Cannot remove local object");
-                        println!("Dealloc for {data}");
                     }
-                    println!("Release weak for {data}");
                 }
                 return_parser::RetVal::ClearDeathNotificationDone(cookie) => {
                     let _ = self
