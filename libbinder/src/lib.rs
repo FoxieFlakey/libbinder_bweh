@@ -272,9 +272,10 @@ impl Runtime {
         let mut write_buf = Vec::new();
         write_buf.extend_from_slice(&Command::SendTransactionSG.as_bytes());
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
+        // NOTE this would leak memory if panicked here
+        unsafe { packet.objects_sent() };
         self.do_read_write(&write_buf, &mut [])
             .expect("Cannot perform BINDER_WRITE_READ to send transaction");
-        unsafe { packet.objects_sent() };
         drop(write_buf);
 
         let mut ret_buf = [0; READ_BUF_SIZE];
@@ -546,9 +547,11 @@ impl Runtime {
             buffers_size: reply.get_buffers_size(),
         });
         transaction.with_bytes(|x| write_buf.extend_from_slice(x));
+        unsafe { reply.objects_sent() };
+
+        // NOTE: on reply error. memory would leak. but this should be rare
         self.do_read_write(&write_buf, &mut [])
             .expect("Cannot send reply");
-        unsafe { reply.objects_sent() };
     }
 
     fn inc_remote_ref(&self, remote: &ObjectRefRemote) {
