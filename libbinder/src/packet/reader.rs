@@ -73,6 +73,12 @@ impl<'a> Reader<'a> {
         }
 
         self.current_offset += count;
+
+        if let Some(&first) = self.offsets.first() {
+            if self.current_offset > first {
+                self.offsets = &self.offsets[1..];
+            }
+        }
         Ok(())
     }
 
