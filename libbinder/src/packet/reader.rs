@@ -39,8 +39,6 @@ pub enum Error {
 
 impl<'a> Reader<'a> {
     pub fn new(packet: &'a Packet) -> Self {
-        println!("Offsets: {:#?}", packet.get_offsets());
-        println!("Data: {:#?}", packet.get_data());
         Self {
             runtime: &packet.runtime,
             current_offset: 0,
@@ -101,7 +99,7 @@ impl<'a> Reader<'a> {
         // SAFETY: The data that came to packet is closely
         // controlled to be only contain valid object with valid
         // pointers
-        let ret = match unsafe { ObjectParsed::try_from_bytes(&self.data) }
+        let ret = match unsafe { ObjectParsed::try_from_bytes(self.get_rest_of_data()) }
             .expect("expecting data is valid")
         {
             ObjectParsed::ByteBuffer(buf) => Ok(buf.buffer),
@@ -122,7 +120,8 @@ impl<'a> Reader<'a> {
             return Err(Error::AttemptingToReadBinderObjectOnWrongOffset);
         }
 
-        match unsafe { ObjectParsed::try_from_bytes(&self.data) }.expect("expecting data is valid")
+        match unsafe { ObjectParsed::try_from_bytes(&self.get_rest_of_data()) }
+            .expect("expecting data is valid")
         {
             ObjectParsed::LocalReference(_)
             | ObjectParsed::RemoteReference(_)
@@ -170,7 +169,7 @@ impl<'a> Reader<'a> {
         // SAFETY: The data that came to packet is closely
         // controlled to be only contain valid object with valid
         // pointers
-        let ret = match unsafe { ObjectParsed::try_from_bytes(&self.data) }
+        let ret = match unsafe { ObjectParsed::try_from_bytes(self.get_rest_of_data()) }
             .expect("expecting data is valid")
         {
             ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => Ok(Proxy::from_object(
