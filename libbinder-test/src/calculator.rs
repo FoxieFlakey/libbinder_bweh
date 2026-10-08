@@ -2,7 +2,7 @@ use std::sync::{Arc, Weak};
 
 use libbinder::{ContextManagerInfo, Runtime, object::B};
 
-use libbinder_basic::TryFromProxy;
+use libbinder_basic::{TryFromProxy, packetable::Serde};
 
 use crate::{
     implementation::calculator::ImplCalculator,
@@ -33,7 +33,7 @@ pub fn main() {
     });
 
     manager
-        .register(calculator.clone(), CALCULATOR_SERVICE_ID)
+        .register(calculator.clone(), Serde(CALCULATOR_SERVICE_ID.to_string()))
         .expect("Cannot register calculator");
 
     calculator.wait_shutdown();

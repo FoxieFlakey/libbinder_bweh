@@ -1,4 +1,5 @@
 use std::{
+    ops::{Deref, DerefMut},
     os::fd::{AsFd, OwnedFd},
     sync::Arc,
 };
@@ -6,56 +7,47 @@ use std::{
 use anyhow::{Context, anyhow};
 use bytemuck::Pod;
 use libbinder::object::B;
+use serde::{Deserialize, Serialize};
 
 use crate::{TryFromProxy, reader::Reader, writer::Writer};
 
-pub trait Packetable {
-    type Deserialized<'a>;
-
+pub trait Packetable<'a>: Sized {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()>;
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>>;
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self>;
 }
 
-impl Packetable for anyhow::Error {
-    type Deserialized<'a> = anyhow::Error;
-
+impl<'a> Packetable<'a> for anyhow::Error {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         writer.write_str(&self.to_string());
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok(anyhow!("{}", reader.read_str()?))
     }
 }
 
-impl Packetable for () {
-    type Deserialized<'a> = ();
-
+impl<'a> Packetable<'a> for () {
     fn serialize(&self, _: &mut Writer) -> anyhow::Result<()> {
         Ok(())
     }
 
-    fn deserialize<'a>(_: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(_: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok(())
     }
 }
 
-impl Packetable for OwnedFd {
-    type Deserialized<'a> = Self;
-
+impl<'a> Packetable<'a> for OwnedFd {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         writer.write_fd(self.as_fd())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok(reader.read_fd()?)
     }
 }
 
-impl<T: Packetable, E: Packetable> Packetable for Result<T, E> {
-    type Deserialized<'a> = Result<T::Deserialized<'a>, E::Deserialized<'a>>;
-
+impl<'a, T: Packetable<'a>, E: Packetable<'a>> Packetable<'a> for Result<T, E> {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         match self {
             Ok(x) => {
@@ -71,7 +63,7 @@ impl<T: Packetable, E: Packetable> Packetable for Result<T, E> {
         }
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         if reader.read_bool().context("Reading whether result is Ok")? {
             Ok(Ok(T::deserialize(reader)?))
         } else {
@@ -80,9 +72,7 @@ impl<T: Packetable, E: Packetable> Packetable for Result<T, E> {
     }
 }
 
-impl<T: Packetable> Packetable for Option<T> {
-    type Deserialized<'a> = Option<T::Deserialized<'a>>;
-
+impl<'a, T: Packetable<'a>> Packetable<'a> for Option<T> {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         match self {
             Some(x) => {
@@ -97,7 +87,7 @@ impl<T: Packetable> Packetable for Option<T> {
         }
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         if reader
             .read_bool()
             .context("Reading whether option is Some")?
@@ -109,66 +99,43 @@ impl<T: Packetable> Packetable for Option<T> {
     }
 }
 
-impl Packetable for &str {
-    type Deserialized<'a> = &'a str;
-
+impl<'a> Packetable<'a> for &'a str {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         writer.write_str(self);
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok(reader.read_str()?)
     }
 }
 
-impl Packetable for str {
-    type Deserialized<'a> = String;
-
+impl<'a> Packetable<'a> for String {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         writer.write_str(self);
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok(reader.read_str()?.to_string())
     }
 }
 
-impl Packetable for String {
-    type Deserialized<'a> = String;
-
-    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
-        writer.write_str(self);
-        Ok(())
-    }
-
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
-        Ok(reader.read_str()?.to_string())
-    }
-}
-
-impl<A0: Packetable, A1: Packetable> Packetable for (A0, A1) {
-    type Deserialized<'a> = (A0::Deserialized<'a>, A1::Deserialized<'a>);
-
+impl<'a, A0: Packetable<'a>, A1: Packetable<'a>> Packetable<'a> for (A0, A1) {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         self.0.serialize(writer)?;
         self.1.serialize(writer)?;
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok((A0::deserialize(reader)?, A1::deserialize(reader)?))
     }
 }
 
-impl<A0: Packetable, A1: Packetable, A2: Packetable> Packetable for (A0, A1, A2) {
-    type Deserialized<'a> = (
-        A0::Deserialized<'a>,
-        A1::Deserialized<'a>,
-        A2::Deserialized<'a>,
-    );
-
+impl<'a, A0: Packetable<'a>, A1: Packetable<'a>, A2: Packetable<'a>> Packetable<'a>
+    for (A0, A1, A2)
+{
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         self.0.serialize(writer)?;
         self.1.serialize(writer)?;
@@ -176,7 +143,7 @@ impl<A0: Packetable, A1: Packetable, A2: Packetable> Packetable for (A0, A1, A2)
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok((
             A0::deserialize(reader)?,
             A1::deserialize(reader)?,
@@ -185,24 +152,18 @@ impl<A0: Packetable, A1: Packetable, A2: Packetable> Packetable for (A0, A1, A2)
     }
 }
 
-impl<A0: Packetable, A1: Packetable, A2: Packetable, A3: Packetable> Packetable
-    for (A0, A1, A2, A3)
+impl<'a, A0: Packetable<'a>, A1: Packetable<'a>, A2: Packetable<'a>, A3: Packetable<'a>>
+    Packetable<'a> for (A0, A1, A2, A3)
 {
-    type Deserialized<'a> = (
-        A0::Deserialized<'a>,
-        A1::Deserialized<'a>,
-        A2::Deserialized<'a>,
-        A3::Deserialized<'a>,
-    );
-
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         self.0.serialize(writer)?;
         self.1.serialize(writer)?;
         self.2.serialize(writer)?;
+        self.3.serialize(writer)?;
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok((
             A0::deserialize(reader)?,
             A1::deserialize(reader)?,
@@ -212,16 +173,14 @@ impl<A0: Packetable, A1: Packetable, A2: Packetable, A3: Packetable> Packetable
     }
 }
 
-impl<T: Pod> Packetable for Vec<T> {
-    type Deserialized<'a> = Vec<T>;
-
+impl<'a, T: Pod> Packetable<'a> for Vec<T> {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         writer.write_usize(self.len());
         writer.write_buf_slice_pod_without_len(self);
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         let len = reader.read_usize()?;
         let buf = reader.read_buf()?;
         let mut vec = Vec::new();
@@ -230,16 +189,14 @@ impl<T: Pod> Packetable for Vec<T> {
     }
 }
 
-impl<T: Pod> Packetable for &[T] {
-    type Deserialized<'a> = &'a [T];
-
+impl<'a, T: Pod> Packetable<'a> for &'a [T] {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         writer.write_usize(self.len());
         writer.write_buf_slice_pod_without_len(self);
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         let len = reader.read_usize()?;
         let buf = reader.read_buf()?;
 
@@ -247,15 +204,13 @@ impl<T: Pod> Packetable for &[T] {
     }
 }
 
-impl<T: TryFromProxy + ?Sized> Packetable for Arc<B<T>> {
-    type Deserialized<'a> = Arc<B<T>>;
-
+impl<'a, T: TryFromProxy + ?Sized> Packetable<'a> for Arc<B<T>> {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
         writer.write_ref(&TryFromProxy::into_base(self.clone()));
         Ok(())
     }
 
-    fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
         Ok(T::try_from_proxy(reader.read_reference()?)?)
     }
 }
@@ -263,15 +218,13 @@ impl<T: TryFromProxy + ?Sized> Packetable for Arc<B<T>> {
 macro_rules! impl_write_primitives {
     ($($t:ty, $method:ident, $method_read:ident);* $(;)?) => {
         $(
-            impl Packetable for $t {
-                type Deserialized<'a> = Self;
-
+            impl<'a> Packetable<'a> for $t {
                 fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
                     writer.$method(*self);
                     Ok(())
                 }
 
-                fn deserialize<'a>(reader: &mut Reader<'a>) -> anyhow::Result<Self::Deserialized<'a>> {
+                fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
                     Ok(reader.$method_read()?)
                 }
             }
@@ -294,3 +247,30 @@ impl_write_primitives!(
     isize,   write_isize, read_isize;
     bool, write_bool, read_bool;
 );
+
+pub struct Serde<T>(pub T);
+
+impl<T> Deref for Serde<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Serde<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+// Serde support
+impl<'a, T: Serialize + Deserialize<'a>> Packetable<'a> for Serde<T> {
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        Ok(self.0.serialize(writer)?)
+    }
+
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
+        Ok(Serde(T::deserialize(reader)?))
+    }
+}

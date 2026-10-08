@@ -1,7 +1,7 @@
 use std::{os::fd::OwnedFd, sync::Arc};
 
 use libbinder::object::{B, ObjectTrait};
-use libbinder_basic::binder_ipc_object;
+use libbinder_basic::{binder_ipc_object, packetable::Serde};
 
 #[binder_ipc_object(root = true, interface_id = "foxie.IObject")]
 pub trait IObject: ObjectTrait {
@@ -17,7 +17,7 @@ pub trait IService: IObject {
 #[binder_ipc_object(interface_id = "foxie.IServiceManager")]
 pub trait IServiceManager: IObject {
     fn shutdown(&self) -> anyhow::Result<()>;
-    fn register(&self, service: Arc<B<dyn IService>>, name: &str) -> anyhow::Result<()>;
+    fn register(&self, service: Arc<B<dyn IService>>, name: Serde<String>) -> anyhow::Result<()>;
     fn unregister(&self, name: &str) -> anyhow::Result<()>;
     fn get_service(&self, name: &str) -> anyhow::Result<Arc<B<dyn IService>>>;
     fn health_check(&self) -> anyhow::Result<()>;

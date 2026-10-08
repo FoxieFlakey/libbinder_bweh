@@ -1,7 +1,7 @@
 use std::sync::{Arc, Weak};
 
 use libbinder::{ContextManagerInfo, Runtime, object::B};
-use libbinder_basic::TryFromProxy;
+use libbinder_basic::{TryFromProxy, packetable::Serde};
 
 use crate::{
     implementation::file_server::ImplFileServer,
@@ -32,7 +32,10 @@ pub fn main() {
     });
 
     manager
-        .register(file_server.clone(), FILE_SERVER_SERVICE_ID)
+        .register(
+            file_server.clone(),
+            Serde(FILE_SERVER_SERVICE_ID.to_string()),
+        )
         .expect("Cannot register file server");
 
     file_server.wait_shutdown();

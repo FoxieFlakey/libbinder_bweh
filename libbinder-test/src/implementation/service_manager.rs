@@ -9,6 +9,7 @@ use libbinder::{
     DeathNotificationToken, Runtime,
     object::{B, ObjectTrait},
 };
+use libbinder_basic::packetable::Serde;
 use nix::unistd::Pid;
 
 use crate::{
@@ -120,7 +121,8 @@ impl IServiceManager for ImplManager {
         Ok(())
     }
 
-    fn register(&self, service: Arc<B<dyn IService>>, name: &str) -> anyhow::Result<()> {
+    fn register(&self, service: Arc<B<dyn IService>>, name: Serde<String>) -> anyhow::Result<()> {
+        let name = &*name;
         let mut state = self.state.write().unwrap();
         if state.is_shutting_down {
             bail!("Service manager is shutting down");

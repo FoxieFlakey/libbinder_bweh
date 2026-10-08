@@ -251,7 +251,7 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
                         // ABI for failure is just bare string
                         bail!(
                             "remote error: {}",
-                            ::std::primitive::str::deserialize(&mut reader).context("Cannot read remote error message")?
+                            <&::std::primitive::str>::deserialize(&mut reader).context("Cannot read remote error message")?
                         );
                     } else if code == libbinder_basic::REPLY_SUCCESS {
                         // here you decode the resopne

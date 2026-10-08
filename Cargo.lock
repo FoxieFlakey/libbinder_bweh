@@ -163,6 +163,7 @@ dependencies = [
  "enumflags2",
  "libbinder",
  "libbinder-basic-macros",
+ "serde",
  "thiserror",
 ]
 
