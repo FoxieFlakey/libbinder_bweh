@@ -169,6 +169,11 @@ impl<'a> Reader<'a> {
         // controlled to be only contain valid object with valid
         // pointers
         let ret = match unsafe { ObjectParsed::try_from_bytes(&self.data) }
+            .inspect_err(|_| {
+                println!("Offsets: {:#?}", self.offsets);
+                println!("Data: {:#?}", self.data);
+                println!("Current offset: {}", self.current_offset);
+            })
             .expect("expecting data is valid")
         {
             ObjectParsed::LocalReference(ObjectRefLocal { data, .. }) => Ok(Proxy::from_object(
