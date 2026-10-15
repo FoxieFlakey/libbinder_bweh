@@ -55,6 +55,7 @@ impl<'a> Reader<'a> {
             return Err(ReadError::ReadError(LibBinderReadError::OutOfBound));
         }
 
+        self.0.skip_bytes(len)?;
         Ok(str::from_utf8(&data[..len])?)
     }
 
