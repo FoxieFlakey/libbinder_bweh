@@ -18,12 +18,12 @@ pub trait Packetable<'a>: Sized {
 
 impl<'a> Packetable<'a> for anyhow::Error {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
-        writer.write_str(&self.to_string());
+        writer.write_str(&format!("{self:#}"));
         Ok(())
     }
 
     fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
-        Ok(anyhow!("{}", reader.read_str()?))
+        Ok(anyhow!("{:#}", reader.read_str()?))
     }
 }
 
