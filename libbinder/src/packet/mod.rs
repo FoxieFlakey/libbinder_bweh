@@ -157,8 +157,9 @@ impl Packet {
                     .has_strong = true;
             }
             ObjectParsed::RemoteReference(_) => (),
-            // Other thing dont matter
-            _ => (),
+            // Still wanting OwnedFd be alive
+            ObjectParsed::Fd(x) => mem::forget(x),
+            ObjectParsed::ByteBuffer(_) => todo!(),
         });
         self.is_sent = true;
     }
