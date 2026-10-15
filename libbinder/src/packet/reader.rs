@@ -163,6 +163,7 @@ impl<'a> Reader<'a> {
                 .first()
                 .ok_or(Error::AttemptingToReadBinderObjectOnWrongOffset)?
         {
+            println!("{} {}", self.current_offset, self.offsets[0]);
             return Err(Error::AttemptingToReadBinderObjectOnWrongOffset);
         }
 
