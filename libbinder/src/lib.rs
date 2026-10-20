@@ -756,8 +756,10 @@ fn worker(
     is_spawned_by_kernel: bool,
 ) {
     if is_spawned_by_kernel {
+        nix::sys::prctl::set_name(&CString::new("BinderLoop").unwrap()).unwrap();
         runtime_strong.register_looper();
     } else {
+        nix::sys::prctl::set_name(&CString::new("MainBinderLoop").unwrap()).unwrap();
         runtime_strong.enter_looper();
     }
     let runtime = Arc::downgrade(&runtime_strong);
