@@ -27,6 +27,7 @@ use libbinder_sys::{
     write_read::binder_read_write,
 };
 use nix::{
+    errno::Errno,
     fcntl::{OFlag, open},
     poll::{PollFd, PollFlags, PollTimeout, poll},
     sys::stat::Mode,
@@ -73,7 +74,7 @@ impl Drop for Runtime {
                 continue;
             }
 
-            join_handle.join().unwrap();
+            join_handle.join().expect("Worker thread has panicked");
         }
     }
 }
@@ -772,7 +773,17 @@ fn worker(
                 PollFd::new(shutdown_pipe.get_read_fd(), PollFlags::POLLIN),
             ];
 
-            poll(&mut pollfd, PollTimeout::NONE).unwrap();
+            loop {
+                let Err(e) = poll(&mut pollfd, PollTimeout::NONE) else {
+                    break;
+                };
+
+                if e == Errno::EINTR {
+                    // Interrupted
+                    continue;
+                }
+                Err::<(), _>(e).unwrap();
+            }
 
             if !pollfd[1].revents().unwrap().is_empty() {
                 break;
