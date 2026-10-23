@@ -98,6 +98,13 @@ impl Packet {
                 cmd.extend_from_slice(&Command::FreeBuffer.as_bytes());
                 cmd.extend_from_slice(&kernel.get_kernel_buf().to_ne_bytes());
 
+                for_each_object(self.get_data(), self.get_offsets(), |object| match object {
+                    ObjectParsed::Fd(_) => (),
+                    ObjectParsed::LocalReference(_) => (),
+                    ObjectParsed::RemoteReference(_) => (),
+                    ObjectParsed::ByteBuffer(_) => (),
+                });
+
                 match binder_read_write(self.runtime.binder_dev.as_fd(), &cmd, &mut []) {
                     Ok((_, read_count)) => Ok(read_count),
                     Err((Errno::EAGAIN, (_, read_bytes))) => Ok(read_bytes),
