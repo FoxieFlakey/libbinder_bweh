@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, anyhow};
 use bytemuck::Pod;
-use libbinder::object::B;
+use libbinder::object::{B, TransactionError};
 use serde::{Deserialize, Serialize};
 
 use crate::{TryFromProxy, reader::Reader, writer::Writer};
@@ -14,6 +14,17 @@ use crate::{TryFromProxy, reader::Reader, writer::Writer};
 pub trait Packetable<'a>: Sized {
     fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()>;
     fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self>;
+}
+
+impl<'a> Packetable<'a> for TransactionError {
+    fn serialize(&self, writer: &mut Writer) -> anyhow::Result<()> {
+        Serialize::serialize(self, writer)?;
+        Ok(())
+    }
+
+    fn deserialize(reader: &mut Reader<'a>) -> anyhow::Result<Self> {
+        Ok(Deserialize::deserialize(reader)?)
+    }
 }
 
 impl<'a> Packetable<'a> for anyhow::Error {

@@ -6,7 +6,10 @@ use std::{
 };
 
 use anyhow::Context;
-use libbinder::{Runtime, object::B};
+use libbinder::{
+    Runtime,
+    object::{B, TransactionError},
+};
 
 use crate::{
     implementation::service::ImplService,
@@ -34,7 +37,7 @@ impl ImplFileServer {
 ifileserver::decode_and_dispatch!(ImplFileServer, base);
 
 impl IObject for ImplFileServer {
-    fn has_interface(&self, interface: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, interface: &str) -> Result<bool, TransactionError> {
         match interface {
             ifileserver::ID => Ok(true),
             _ => self.base.has_interface(interface),
@@ -43,49 +46,55 @@ impl IObject for ImplFileServer {
 }
 
 impl IService for ImplFileServer {
-    fn stop(&self) -> anyhow::Result<()> {
+    fn stop(&self) -> Result<(), TransactionError> {
         self.base.stop()
     }
 
-    fn say_hello(&self) -> anyhow::Result<()> {
+    fn say_hello(&self) -> Result<(), TransactionError> {
         self.base.say_hello()
     }
 }
 
 impl IFileServer for ImplFileServer {
-    fn open_file(&self, path: &str) -> anyhow::Result<OwnedFd> {
+    fn open_file(&self, path: &str) -> Result<OwnedFd, TransactionError> {
         Ok(fs::OpenOptions::new()
             .write(true)
             .read(true)
             .create(true)
             .open(path)
-            .context("Cannot open file")?
+            .context("Cannot open file")
+            .map_err(|x| TransactionError::Miscellanous(format!("{x:#}")))?
             .into())
     }
 
-    fn read_file(&self, path: &str) -> anyhow::Result<Vec<u8>> {
+    fn read_file(&self, path: &str) -> Result<Vec<u8>, TransactionError> {
         let mut buffer = Vec::new();
         let mut file = File::from(
             self.derived
                 .upgrade()
                 .unwrap()
                 .open_file(path)
-                .context("Cannot open file for reading")?,
+                .context("Cannot open file for reading")
+                .map_err(|x| TransactionError::Miscellanous(format!("{x:#}")))?,
         );
         file.read_to_end(&mut buffer)
-            .context("Cannot read the content")?;
+            .context("Cannot read the content")
+            .map_err(|x| TransactionError::Miscellanous(format!("{x:#}")))?;
         Ok(buffer)
     }
 
-    fn write_file(&self, path: &str, buf: &[u8]) -> anyhow::Result<()> {
+    fn write_file(&self, path: &str, buf: &[u8]) -> Result<(), TransactionError> {
         let mut file = File::from(
             self.derived
                 .upgrade()
                 .unwrap()
                 .open_file(path)
-                .context("Cannot open file for writing")?,
+                .context("Cannot open file for writing")
+                .map_err(|x| TransactionError::Miscellanous(format!("{x:#}")))?,
         );
-        file.write_all(buf).context("Cannot write to file")?;
+        file.write_all(buf)
+            .context("Cannot write to file")
+            .map_err(|x| TransactionError::Miscellanous(format!("{x:#}")))?;
         Ok(())
     }
 }

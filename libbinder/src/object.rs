@@ -1,8 +1,6 @@
 use std::{
     any::Any,
-    error::Error,
     ffi::CString,
-    io,
     ops::Deref,
     sync::{Arc, RwLock, Weak},
 };
@@ -11,6 +9,7 @@ use crate::{Runtime, packet::Packet, proxy::Proxy};
 use enumflags2::{BitFlags, bitflags};
 use libbinder_sys::transaction::TransactionFlag;
 use nix::unistd::{Pid, Uid};
+use serde::{Deserialize, Serialize};
 
 #[derive(Default, Clone, Copy)]
 pub struct ObjectFlags {
@@ -81,7 +80,7 @@ impl Flag {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Serialize, Deserialize)]
 pub enum TransactionError {
     #[error("Target of this transaction is gone")]
     TargetDied,
@@ -89,10 +88,24 @@ pub enum TransactionError {
     TargetFrozen,
     #[error("Kernel cannot send this transaction")]
     KernelCantSend,
-    #[error("Kernel has an error")]
-    KernelError(#[source] io::Error),
-    #[error("Miscellanous error")]
-    Miscellanous(#[source] Box<dyn Error + Send + Sync>),
+    #[error("Expected reply")]
+    ExpectedReply,
+    #[error("Unknown transaction code: {0}")]
+    UnknownTransactionCode(u32),
+    #[error("Unknown reply code: {0}")]
+    UnknownReplyCode(u32),
+    #[error("Kernel has an error: {0}")]
+    KernelError(String),
+    #[error("Miscellanous error: {0}")]
+    Miscellanous(String),
+    #[error("Serializing error: {0}")]
+    SerializingError(String),
+    #[error("Deserializing error: {0}")]
+    DeserializingError(String),
+    #[error("Serializing reply error: {0}")]
+    SerializingReplyError(String),
+    #[error("Deserializing reply error: {0}")]
+    DeserializingReplyError(String),
 }
 
 pub trait ObjectTrait: Sync + Send + Any + 'static {

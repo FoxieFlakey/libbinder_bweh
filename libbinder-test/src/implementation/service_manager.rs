@@ -4,10 +4,10 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use libbinder::{
     DeathNotificationToken, Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
 };
 use libbinder_basic::packetable::Serde;
 use nix::unistd::Pid;
@@ -55,7 +55,7 @@ impl ImplManager {
 iservicemanager::decode_and_dispatch!(ImplManager, base);
 
 impl IObject for ImplManager {
-    fn has_interface(&self, interface: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, interface: &str) -> Result<bool, TransactionError> {
         match interface {
             iservicemanager::ID => Ok(true),
             _ => self.base.has_interface(interface),
@@ -64,34 +64,44 @@ impl IObject for ImplManager {
 }
 
 impl IServiceManager for ImplManager {
-    fn health_check(&self) -> anyhow::Result<()> {
+    fn health_check(&self) -> Result<(), TransactionError> {
         let state = self.state.read().unwrap();
         for service in &state.services {
-            service.1.service.say_hello().with_context(|| {
-                format!("Cannot check service's health (Service: {})", service.0)
-            })?;
+            service
+                .1
+                .service
+                .say_hello()
+                .with_context(|| format!("Cannot check service's health (Service: {})", service.0))
+                .map_err(|x| TransactionError::Miscellanous(format!("{x:#}")))?;
         }
         Ok(())
     }
 
-    fn get_refcount(&self, remote: Arc<B<dyn ObjectTrait>>) -> anyhow::Result<(usize, usize)> {
+    fn get_refcount(
+        &self,
+        remote: Arc<B<dyn ObjectTrait>>,
+    ) -> Result<(usize, usize), TransactionError> {
         match remote.get_remote() {
             Some(x) => {
                 let strong = x
                     .get_remote_strong_count()
-                    .context("Getting strong count")?
+                    .context("Getting strong count")
+                    .map_err(|x| TransactionError::Miscellanous(format!("{x:#}")))?
                     .expect("This already a remote");
                 let weak = x
                     .get_remote_strong_count()
-                    .context("Getting strong count")?
+                    .context("Getting strong count")
+                    .map_err(|x| TransactionError::Miscellanous(format!("{x:#}")))?
                     .expect("This already a remote");
                 Ok((strong, weak))
             }
-            None => bail!("Cannot get reference count for service manager's objects"),
+            None => Err(TransactionError::Miscellanous(
+                "Cannot get reference count for service manager's objects".to_string(),
+            )),
         }
     }
 
-    fn shutdown(&self) -> anyhow::Result<()> {
+    fn shutdown(&self) -> Result<(), TransactionError> {
         let mut state = self.state.write().unwrap();
         state.is_shutting_down = true;
         let mut registry = mem::take(&mut state.services);
@@ -111,7 +121,7 @@ impl IServiceManager for ImplManager {
                 state.services = registry;
                 drop(state);
                 println!("Cannot stop service '{service_name}': {e}");
-                return Err(e);
+                return Err(TransactionError::Miscellanous(format!("{e:#}")));
             }
             registry.remove(&service_name);
             println!("Stopped service '{service_name}'");
@@ -121,15 +131,23 @@ impl IServiceManager for ImplManager {
         Ok(())
     }
 
-    fn register(&self, service: Arc<B<dyn IService>>, name: Serde<String>) -> anyhow::Result<()> {
+    fn register(
+        &self,
+        service: Arc<B<dyn IService>>,
+        name: Serde<String>,
+    ) -> Result<(), TransactionError> {
         let name = &*name;
         let mut state = self.state.write().unwrap();
         if state.is_shutting_down {
-            bail!("Service manager is shutting down");
+            return Err(TransactionError::Miscellanous(
+                "Service manager is shutting down".into(),
+            ));
         }
 
         if state.services.get(name).is_some() {
-            bail!("Service '{name}' already registered")
+            return Err(TransactionError::Miscellanous(format!(
+                "Service '{name}' already registered"
+            )));
         }
 
         let rt = self.get_runtime();
@@ -169,15 +187,19 @@ impl IServiceManager for ImplManager {
         Ok(())
     }
 
-    fn unregister(&self, name: &str) -> anyhow::Result<()> {
+    fn unregister(&self, name: &str) -> Result<(), TransactionError> {
         let mut state = self.state.write().unwrap();
         let Some(ServiceInfo { owning_pid, .. }) = state.services.get(name) else {
-            bail!("Service '{name}' is unknown");
+            return Err(TransactionError::Miscellanous(format!(
+                "Service '{name}' is unknown"
+            )));
         };
         let caller_pid: Pid = self.get_runtime().get_caller_identity().sender_pid;
 
         if owning_pid != &caller_pid {
-            bail!("You do not own service '{name}'");
+            return Err(TransactionError::Miscellanous(format!(
+                "You do not own service '{name}'"
+            )));
         }
 
         let result = state.services.remove(name).unwrap();
@@ -188,10 +210,12 @@ impl IServiceManager for ImplManager {
         Ok(())
     }
 
-    fn get_service(&self, name: &str) -> anyhow::Result<Arc<B<dyn IService>>> {
+    fn get_service(&self, name: &str) -> Result<Arc<B<dyn IService>>, TransactionError> {
         match self.state.read().unwrap().services.get(name) {
             Some(x) => Ok(x.service.clone()),
-            None => bail!("Cannot find service: {name}"),
+            None => Err(TransactionError::Miscellanous(format!(
+                "Cannot find service: {name}"
+            ))),
         }
     }
 }

@@ -293,9 +293,9 @@ impl Runtime {
             let mut err = None;
             self.handle_ret_values(unsafe { RetIterator::new(&read) }, |ret| match ret {
                 return_parser::RetVal::Err(e) => {
-                    err = Some(TransactionError::KernelError(io::Error::from_raw_os_error(
-                        e,
-                    )));
+                    err = Some(TransactionError::KernelError(
+                        io::Error::from_raw_os_error(e).to_string(),
+                    ));
                 }
                 return_parser::RetVal::FailedTransaction => {
                     err = Some(TransactionError::KernelCantSend);

@@ -149,14 +149,16 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
                         });
                         args.push(quote! {
                             <#ty as libbinder_basic::packetable::Packetable>::deserialize(&mut msg_reader)
-                                .context(concat!("Reading '", stringify!(#pat), "'"))?
+                                .context(concat!("Reading '", stringify!(#pat), "'"))
+                                .map_err(|x| TransactionError::DeserializingError(format!("{x:#}")))?
                         });
                         arg_encoder_list.push(quote! {
                             #pat: #ty
                         });
                         arg_encoder.push(quote! {
                             Packetable::serialize(&#pat, &mut _ec27c490_2b98_48ab_a72e_ce7e50ff669e_writer)
-                                .context(concat!("Cannot encode '", stringify!(#pat), "'"))?;
+                                .context(concat!("Cannot encode '", stringify!(#pat), "'"))
+                                .map_err(|x| TransactionError::SerializingError(format!("{x:#}")))?;
                         });
                     }
                 }
@@ -164,11 +166,9 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             dispatchers.push(quote! {
                 self::#code_name => {
-                    let ret = (|| -> anyhow::Result<()> {
-                        Ok(target
-                            .#name(#(#args),*)?
-                            .serialize(&mut reply_writer)
-                            .context("Cannot serializing return value")?)
+                    let ret = (|| -> Result<(), TransactionError> {
+                        Ok(Packetable::serialize(&target.#name(#(#args),*), &mut reply_writer)
+                            .map_err(|x| TransactionError::SerializingReplyError(format!("{x:#}")))?)
                     })();
                     match ret {
                         Ok(()) => Ok(reply_writer.finish()),
@@ -241,23 +241,25 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let mut _ec27c490_2b98_48ab_a72e_ce7e50ff669e_writer = libbinder_basic::writer::Writer::new(self.get_runtime());
                     #(#arg_encoder);*
                     let mut packet = _ec27c490_2b98_48ab_a72e_ce7e50ff669e_writer.finish();
-                    let (code, reply) = self
-                        .on_transaction(#code_name, ::libbinder::object::Flag::AcceptFd.into(), &mut packet)
-                        .context("Cannot perform transaction")?
-                        .context("Expecting reply, but got none")?;
+                    let Some((code, reply)) = self.on_transaction(#code_name, ::libbinder::object::Flag::AcceptFd.into(), &mut packet)? else {
+                        return Err(TransactionError::ExpectedReply.into());
+                    };
 
                     let mut reader = libbinder_basic::reader::Reader::new(&reply);
                     if code == libbinder_basic::REPLY_FAILURE {
-                        // ABI for failure is just bare string
-                        bail!(
-                            "remote error: {}",
-                            <&::std::primitive::str as libbinder_basic::packetable::Packetable>::deserialize(&mut reader).context("Cannot read remote error message")?
-                        );
+                        todo!()
+                        // bail!(
+                        //     "remote error: {}",
+                        //     <&::std::primitive::str as libbinder_basic::packetable::Packetable>::deserialize(&mut reader).context("Cannot read remote error message")?
+                        // );
                     } else if code == libbinder_basic::REPLY_SUCCESS {
                         // here you decode the resopne
-                        Ok(<#return_type as libbinder_basic::packetable::Packetable>::deserialize(&mut reader).context("Cannot read remote's response")?)
+                        match <#return_type as libbinder_basic::packetable::Packetable>::deserialize(&mut reader) {
+                            Ok(x) => Ok(x),
+                            Err(e) => Err(TransactionError::DeserializingError(format!("{e:#}")).into()),
+                        }
                     } else {
-                        bail!("Remote sent unknown reply code: {code}");
+                        Err(TransactionError::UnknownReplyCode(code).into())
                     }
                 }
             });
@@ -282,7 +284,7 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
     let parent_forwarder;
 
     if is_root {
-        fallback = quote! { x => Err(anyhow!("unrecognized transaction code {x}")), };
+        fallback = quote! { x => Err(TransactionError::UnknownTransactionCode(x)), };
         proxy_forwarder = quote! {};
         parent_forwarder = quote! {};
         base_proxy = quote! { ::libbinder::proxy::Proxy };
@@ -344,7 +346,8 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
         #trait_vis mod #mod_name {
             use libbinder_basic::packetable::Packetable;
             use libbinder_basic::{REPLY_SUCCESS, REPLY_FAILURE};
-            use ::anyhow::{Context, anyhow, bail};
+            use libbinder::object::TransactionError;
+            use ::anyhow::Context;
 
             // Want everything from super accessible here
             use super::*;
@@ -374,7 +377,7 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
                             Ok(x) => Ok(Some((REPLY_SUCCESS, x))),
                             Err(err) => {
                                 let mut writer = libbinder_basic::writer::Writer::new(target.get_runtime());
-                                err.serialize(&mut writer).unwrap();
+                                Packetable::serialize(&format!("{err:#}"), &mut writer).map_err(|e| TransactionError::SerializingReplyError(format!("{e:#}")))?;
                                 Ok(Some((REPLY_FAILURE, writer.finish())))
                             }
                         }
@@ -390,8 +393,8 @@ pub fn binder_ipc_object(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 fn try_from_proxy(proxy: ::libbinder::proxy::Proxy) -> ::std::result::Result<::std::sync::Arc<::libbinder::object::B<Self>>, ::libbinder::object::TransactionError> {
                     let temp = #proxy_name::new(proxy);
-                    if !temp.has_interface(ID).map_err(|x| ::libbinder::object::TransactionError::Miscellanous(x.into()))? {
-                        return Err(::libbinder::object::TransactionError::Miscellanous(anyhow!("Remote does not support '{}' interface", ID).into()));
+                    if !temp.has_interface(ID)? {
+                        return Err(::libbinder::object::TransactionError::Miscellanous(format!("Remote does not support '{}' interface", ID)));
                     }
                     Ok(::std::sync::Arc::new(::libbinder::object::B::new(temp)))
                 }

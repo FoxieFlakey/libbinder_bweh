@@ -2,7 +2,7 @@ use std::sync::Weak;
 
 use libbinder::{
     Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
 };
 
 use crate::{
@@ -32,7 +32,7 @@ impl ImplService {
 }
 
 impl IObject for ImplService {
-    fn has_interface(&self, interface: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, interface: &str) -> Result<bool, TransactionError> {
         match interface {
             iservice::ID => Ok(true),
             _ => self.base.has_interface(interface),
@@ -41,7 +41,7 @@ impl IObject for ImplService {
 }
 
 impl IService for ImplService {
-    fn stop(&self) -> anyhow::Result<()> {
+    fn stop(&self) -> Result<(), TransactionError> {
         let caller_pid = self.get_runtime().get_caller_identity().sender_pid;
         let caller_uid = self.get_runtime().get_caller_identity().sender_euid;
         println!("[Service] Stop trigged by {caller_pid} who is {caller_uid}");
@@ -49,7 +49,7 @@ impl IService for ImplService {
         Ok(())
     }
 
-    fn say_hello(&self) -> anyhow::Result<()> {
+    fn say_hello(&self) -> Result<(), TransactionError> {
         let caller_pid = self.get_runtime().get_caller_identity().sender_pid;
         let caller_uid = self.get_runtime().get_caller_identity().sender_euid;
         println!("[Service] Say hello from {caller_pid} who is {caller_uid}");

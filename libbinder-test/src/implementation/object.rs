@@ -2,7 +2,7 @@ use std::sync::{Arc, Weak};
 
 use libbinder::{
     Runtime,
-    object::{B, ObjectTrait},
+    object::{B, ObjectTrait, TransactionError},
 };
 
 use crate::interface::{IObject, iobject};
@@ -42,7 +42,7 @@ impl ObjectTrait for ImplObject {
 }
 
 impl IObject for ImplObject {
-    fn has_interface(&self, interface: &str) -> anyhow::Result<bool> {
+    fn has_interface(&self, interface: &str) -> Result<bool, TransactionError> {
         match interface {
             iobject::ID => Ok(true),
             _ => Ok(false),
